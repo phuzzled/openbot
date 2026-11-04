@@ -533,14 +533,17 @@ export class DrainScheduler {
       }
       // An automatic plan continuation runs only when nothing else waits in the lane and its chain
       // is still in memory. Otherwise its deliveries end as their last turn did, and the drain runs again.
-      const planNote = context.planContinuation?.queued
-        ? this.#planContinuation.claim(
-            agentId,
-            taskId,
-            context.delivery.id,
-            this.#mailbox.laneQueuedIds(agentId, taskId).length > 0,
-          )
-        : null;
+      // A routine run in its own session continues only in that session, which a restart closes.
+      const planNote =
+        context.planContinuation?.queued &&
+        (!this.#runsInOwnSession(context) || this.#continuedRoutineSession(agentId, taskId) !== undefined)
+          ? this.#planContinuation.claim(
+              agentId,
+              taskId,
+              context.delivery.id,
+              this.#mailbox.laneQueuedIds(agentId, taskId).length > 0,
+            )
+          : null;
       if (context.planContinuation?.queued && planNote === null) {
         yield* this.endPlanContinuation(agentId, taskId);
         return;
@@ -593,6 +596,13 @@ export class DrainScheduler {
       this.#planContinuation.cancel(agentId, taskId);
       const settled = yield* this.#mailbox.settlePlanContinuations(agentId, taskId);
       if (settled.length === 0) return;
+      // The session that a routine run kept open for its continuation closes with the run.
+      const routineSession = settled.some(
+        (deliveryId) => this.#mailbox.getDelivery(deliveryId)?.delivery.sender.kind === "routine",
+      )
+        ? this.#continuedRoutineSession(agentId, taskId)
+        : undefined;
+      if (routineSession) yield* this.#threads.closeRoutineThread(routineSession);
       for (const deliveryId of settled) {
         const deliveryTaskId = this.#mailbox.taskIdForDelivery(deliveryId);
         const taskThreadId = deliveryTaskId === null ? null : this.#tasks.threadId(deliveryTaskId);
@@ -744,7 +754,13 @@ export class DrainScheduler {
           this.#mailboxSync.emitQueue(agent.id);
           return;
         }
-        routineThreadId = yield* this.#threads.startRoutineThread(agent, client).pipe(toDeliveryStartFailed);
+        // A plan continuation runs in the session that its run kept open: the request is already in it.
+        // A new run closes such a session first: its continuation ended with a cancelled run.
+        const kept = this.#continuedRoutineSession(agent.id, taskId);
+        if (kept && planNote === undefined) yield* this.#threads.closeRoutineThread(kept);
+        routineThreadId =
+          (planNote === undefined ? undefined : kept) ??
+          (yield* this.#threads.startRoutineThread(agent, client).pipe(toDeliveryStartFailed));
       }
       let threadId =
         routineThreadId ??
@@ -1063,6 +1079,14 @@ export class DrainScheduler {
    * run does not read that whole session again. A routine run for a channel, an external
    * conversation or a task runs in that thread's session.
    */
+  /**
+   * The open session of a routine run in this lane. Only the agent's own chat (`taskId` null) has
+   * one. Between two turns of a run whose plan continues, it is that run's.
+   */
+  #continuedRoutineSession(agentId: string, taskId: string | null): string | undefined {
+    return taskId === null ? this.#conversation.routineSession(agentId) : undefined;
+  }
+
   #runsInOwnSession(context: DeliveryContext): boolean {
     const id = context.delivery.id;
     return (
