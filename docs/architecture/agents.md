@@ -129,17 +129,20 @@ open and nothing that brings it back. At the end of each turn, `TurnLifecycle` c
 completed, no plan continuation is queued, it ran in the own chat or a task (not a channel or
 messaging thread, a routine run or a quiet run) for a message of the user or of the agent itself,
 no open wait serves its deliveries (`turnLeavesWaitOpen`), no question, approval or takeover waits,
-the last line of the answer does not wait for the user (`waitsForUser`; a last social question such
-as "Anything else?" does not hide a promise before it), and the answer's final part promises a
+the answer does not wait on the user in any sentence of its last part (`answerWaitsOnUser`, checked
+before the promise, so "Let me know if this looks right. I'll keep an eye on replies." is no stall; a
+last social question such as "Anything else?" does not hide a promise before it), and the answer's final part promises a
 follow-up (`followUpPromise`: "I'll let you know when they reply", "Once they reply, I'll let you
-know", "I'll check on it in 10 minutes", "Tomorrow I'll compare the quotes") or the plan of the turn
-has open steps and the answer does not wait on the user (`answerWaitsOnUser`). `followUpPromise`
+know", "I'll check on it in 10 minutes", "Tomorrow I'll compare the quotes", "On Monday I'll send
+it", "In 2 hours I'll check") or the plan of the turn has open steps. `followUpPromise`
 reads only the agent's own prose: fenced code, quoted lines, inline code, text in double quotes,
 text of 3 words or more in single quotes and a drafted message (from "Here is a draft", "Draft reply
-to Sam:", "Proposed reply:", "Here's what I'd send:", "Subject:" or a greeting to its sign-off) go
-first. A sentence that waits on an act of the user ("When you are ready, I'll start the migration",
-"Let me know and I'll send it") or on an approval ("After approval I'll deploy", "Pending your
-approval, I'll send it", "If approved, I'll book it", "Say yes and I'll send it"), a question, an
+to Sam:", "Proposed reply:", "Here's what I'd send:", "Email to Sam:", "Message for Sam", "Text to
+send:", "SMS to the plumber:", a "Draft" heading, "Subject:" or a greeting to its sign-off) go first. A sentence that waits on an act of the user ("When you are ready, I'll start the migration",
+"Let me know and I'll send it", "Please review and approve.", "Standing by.", "Over to you.", "Your
+call.", "Not sent yet.") or on an approval ("After approval I'll deploy", "Pending your approval, I'll
+send it", "If approved, I'll book it", "Say yes and I'll send it", "I need your approval before I send
+it", "Ready for your sign-off"), a question, an
 offer, a negation and the past tense do not count. A promise under a condition (when, once, as soon
 as, after, if, until, unless, pending, upon) counts only when each "I'll" of the sentence only
 reports to the user or watches ("I'll let you know when the vendors reply"). An act under a condition
@@ -148,23 +151,57 @@ contract") does not, because it can need the user's approval and a nudge must no
 not sure, it finds no stall. `answerWaitsOnUser` is also the rule of the plan continuation
 (`TurnLifecycle.#planContinues`): an answer whose last part asks the user a question that is not only
 whether to continue, says "Let me know what you think" or "Ready when you are", waits on an approval
-or on a named person ("Once Andrew replies"), or offers a choice, does not continue and gets no
-open-steps check. Then `StallCheckStore` keeps one check for the lane in the fork table
-`fork_stall_checks`, due 15 minutes later, with the request cut to 2,000 characters. A newer turn of
+or on a named person ("Once Andrew replies", "Once Sam signs"), or offers a choice, does not continue
+and gets no open-steps check. The detection is only a hint for when to check in. Safety comes from
+code, in two gates. First, the plan continuation gate (`stall-sweep/continuation-gate.ts`, called by
+`PlanContinuation.consider` and `restore`, so it covers a continuation after a user turn, a wake, a
+routine run and a restart): a continuation does not run when the answer asks the user anything
+(other than only "Shall I continue?") or names an approval, a confirmation, a go-ahead, a green light,
+a sign-off or a review in any form, or when a next open step (each step in progress and the first
+pending step) is an outward action (send, email, message, post, publish, pay, transfer, buy, book,
+order, deploy, release, ship, merge, push, delete, remove, cancel, sign, submit, call or contact
+someone, and their forms) that the user's own message of the request does not name as a verb. A verb
+of the same group counts ("Email the board" allows "Send the email"), a noun or a negation does not
+("Draft an email", "Don't send it yet"). With no message of the user (a wake, a task brief, a routine
+run), an outward step always stops the chain. A nudge turn does not continue its plan. Second, a
+nudge turn is a check-in only (below). Then `StallCheckStore` keeps one check for the lane in the fork table
+`fork_stall_checks`, due 15 minutes later, with the request cut to 2,000 characters. A promise that
+names a time (`promise-time.ts`: "tomorrow" 09:00, "tonight" 20:00, "later today" 3 hours, a weekday
+09:00, "in N minutes/hours/days", a clock time; another time word such as "on the 14th" gets 09:00
+tomorrow) is due 15 minutes after that local time, and its 24-hour age limit counts from that time
+(`stallCheckAgeFrom`, read again from the stored reason). A newer turn of
 the lane that is not a stall ends the check; a plan continuation of the same request holds it. A turn
 for a teammate's message, or with no delivery, keeps the check of another request. `StallSweep` is
 one more source of the shared `RoutineTimer`. At the due time, a check older than 24 hours
 (`STALL_MAX_AGE_MS`) ends with no nudge. A busy lane (a teammate's turn, a routine run, an unrelated
 wake) puts the check off by 15 minutes, up to that age limit. A closed task, a user message since the
 check, or a wait that backs it (`waitBacksStallCheck`: a wait of the lane that serves the check's
-request or nudge, that opened at or after the check, or that has a wake time) cancels it. So a status
-question while the timed wait of the first request is open gets no nudge. An older wait of other
-work with no time, as one that a Stop left, does not. A hidden agent keeps its check until it shows (`mayWake`), and with
-no ready provider the check waits 15 minutes. Otherwise one nudge goes to the lane, as the wake of
+request or nudge, that opened at or after the check, or that has a wake time at most 24 hours after
+the check's time) cancels it. So a status question while the timed wait of the first request is open
+gets no nudge, and a wait that wakes days later does not turn the sweep off for the lane. An older
+wait of other work with no time, as one that a Stop left, does not. A hidden agent keeps its check until it shows (`mayWake`), and with
+no ready provider the check waits 15 minutes. An agent whose provider OpenBot cannot restrict to a
+check-in (`checkInRestricts`) gets no nudge: the check ends with the `stall-alert` line. Otherwise one nudge goes to the lane, as the wake of
 timed waits does (`#enqueueWaitWake`, key `stall-nudge:<checkId>:<n>`). Its text starts with
 `STALL_NUDGE_HEADER` (`isStallNudgeDelivery`), so `deliveryPromptInput` sends it as is: the reason,
-then first the instruction to say so in one line and stop if the agent waits for the user, and never
-to do an action that the user did not approve, then the ways to end the stall, and the request. A
+the line "This turn is a check-in only. You cannot act in it.", the instruction to say so in one line
+and stop if the agent waits for the user, the ways to end the stall (report, wait, routine, ask), and
+the request.
+
+A nudge turn is a check-in turn (`stall-sweep/check-in-turns.ts`). `DrainScheduler` marks its
+provider thread in `CheckInTurns` when the turn starts (each other turn clears the mark), and sends
+`checkInOnly: true`. `OpenBotToolRouter` refuses each OpenBot tool of a marked thread that is not in
+`CHECK_IN_OPENBOT_TOOLS` (waits, routine create and update, `ask_user`, `ask_ui`, reads), and every
+browser tool, and `AttentionRegistry.declineForCheckIn` declines each approval, permission and MCP
+consent request of the thread with no card, also for an agent with Full access. Per provider:
+
+| Provider | How a check-in turn is restricted |
+|---|---|
+| Claude | A `PreToolUse` hook (`claudeCheckInHooks`) and `canUseTool` deny each tool that is not a read (`CLAUDE_CHECK_IN_TOOLS`), `AskUserQuestion`, `TodoWrite` or an OpenBot tool. A hook runs also when an allow rule of the user matches. The MCP tools of the user's servers, Bash, file writes, `WebFetch` and subagents are denied. |
+| Codex | `turn/start` sends a read-only sandbox with no network and the `untrusted` approval policy for the turn, and OpenBot declines each approval. Codex runs MCP tools outside its sandbox, and a tool set to "always allow" asks nothing, so a Codex agent gets nudges only when no MCP server is on. |
+| Each other provider (ACP agents, Pi, Grok, Muse, and the rest) | Not restricted. No nudge: the user gets the `stall-alert` line. |
+
+A
 nudge turn that stalls again keeps the request and its count, and the next check is 60 minutes later.
 After 2 nudges of one request, or 12 nudges of one agent in 24 hours (`fork_stall_nudges`), a lane
 that stalls again gets one `stall-alert` line for the user, which counts as unread, and no more
