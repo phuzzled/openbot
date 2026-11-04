@@ -223,7 +223,7 @@ import type { AgentStore } from "./agent-store";
 import { type AgentTaskBranchFailed, AgentTasks } from "./agent-tasks/agent-tasks";
 import { type AgentThreadRecord, AgentThreadStore } from "./agent-threads/agent-thread-store";
 import { AgentWaitStore } from "./agent-waits/agent-wait-store";
-import { AgentWaits } from "./agent-waits/agent-waits";
+import { AgentWaits, turnLeavesWaitOpen } from "./agent-waits/agent-waits";
 import { TimedWaitWakes } from "./agent-waits/timed-wait-wakes";
 import { automationRunCommand } from "./automation-command";
 import { toChannelOperationError } from "./channel-effects";
@@ -1491,8 +1491,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#memoryReview.turnEnded(agentId, sideThreadId, counts, memoryCommitted),
         turnStopped: (agentId, taskId, turnId) =>
           this.#stoppedTurn(agentId, taskId) === turnId || (taskId === null && this.#requestedNewChats.has(agentId)),
-        hasOpenWait: (agentId, deliveryIds) =>
-          this.#waits.list(agentId).waits.some((wait) => deliveryIds.includes(wait.requestMessageId)),
+        hasOpenWait: (agentId, deliveryIds) => turnLeavesWaitOpen(this.#waits.list(agentId).waits, deliveryIds),
         routineAnswered: (agentId, deliveryId, answer) => {
           const agent = this.#store.list().find((item) => item.id === agentId);
           const run = this.#routines.runForDelivery(deliveryId);

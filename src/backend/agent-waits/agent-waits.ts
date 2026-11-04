@@ -321,6 +321,19 @@ function waitSummary(wait: AgentWait) {
   };
 }
 
+/**
+ * Whether the turn of these deliveries leaves a wait open, so it waits and its plan does not continue
+ * by itself: it opened a wait for its request, or a delivery of the turn woke a wait (a wake, a routine
+ * run) and the turn left that wait open. A turn that rescheduled the wait it woke counts too.
+ */
+export function turnLeavesWaitOpen(waits: readonly AgentWait[], deliveryIds: readonly string[]): boolean {
+  return waits.some(
+    (wait) =>
+      deliveryIds.includes(wait.requestMessageId) ||
+      (wait.wakeDeliveryId !== null && deliveryIds.includes(wait.wakeDeliveryId)),
+  );
+}
+
 /** The part of a run's input that continues its woken waits. */
 export function wokenWaitsPromptText(waits: readonly AgentWait[]): string | null {
   if (waits.length === 0) return null;
