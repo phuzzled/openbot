@@ -21,7 +21,9 @@
 //   8. A side thread continues in its own thread only.
 //   8a. A turn that a teammate's message started continues; the teammate gets one result.
 //   9. A routine run continues in its own session, and its run ends once with the last answer.
-//  10. A restart while a continuation waits completes the request with no new turn.
+//  10. A restart while a continuation waits runs that continuation once, with a note about the restart.
+//  11. A restart during a turn with open steps queues exactly one continuation. A turn with no plan
+//      ends as interrupted, as before.
 // Not checked: a message sent in the short gap before a continuation starts. The drain starts the
 // continuation at once, and a hidden agent refuses new messages. Check 7 covers the same rule.
 // No provider, account or network is used. `bun run test:plan-continuation`.
@@ -62,6 +64,8 @@ interface FakeTurn {
   steps: [string, StepStatus][];
   answer?: string;
   delayMs?: number;
+  /** Sends the plan when the turn starts, as well as at its end. */
+  planEarly?: boolean;
   calls?: { tool: string; arguments: Record<string, string | string[]> }[];
 }
 
@@ -116,7 +120,8 @@ const answer = (message) => {
     case "plugin/list": return write({ id: message.id, result: { marketplaces: [] } });
     case "config/read": return write({ id: message.id, result: config });
     case "config/batchWrite": return write({ id: message.id, result: {} });
-    case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + (++threads), turns: [] } } });
+    // With the process id, so a fake that runs after a restart does not reuse an earlier session id.
+    case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + process.pid + "-" + (++threads), turns: [] } } });
     case "thread/resume": return write({ id: message.id, result: { thread: { id: params.threadId, turns: [] } } });
     case "thread/unsubscribe":
       log({ method: "unsubscribe", threadId: params.threadId });
@@ -137,6 +142,7 @@ const answer = (message) => {
       const script = (scripts.get(params.threadId) || []).shift() || { steps: [] };
       log({ method: "turn", threadId: params.threadId, turnId, note, text });
       const turn = { threadId: params.threadId, turnId, script, calls: [...(script.calls || [])] };
+      if (script.planEarly) setTimeout(() => write({ method: "turn/plan/updated", params: { threadId: params.threadId, turnId, plan: (script.steps || []).map(([step, status]) => ({ step, status })) } }), 50);
       return callNext(turn);
     }
     case "turn/interrupt": {
@@ -268,6 +274,14 @@ function openService() {
 }
 
 let current = openService();
+
+/** Stops the service as the app does when it quits, and starts it again on the same profile. */
+async function restart() {
+  await runCauseEffect(current.service.stop());
+  current.database.close();
+  current = openService();
+  await runCauseEffect(current.service.initialize());
+}
 
 const ended = (status: string | undefined) =>
   status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled";
@@ -930,26 +944,18 @@ try {
     return { turns: 1 };
   });
 
-  await check("a restart while a continuation waits completes the request with no new turn", async () => {
+  await check("a restart while a continuation waits runs the continuation once", async () => {
     const agent = await createAgent("Restart");
     const mark = loggedTurns().length;
     const id = await send(
       agent.id,
-      `Index it. ${plan(
-        {
-          steps: [
-            ["Scan", "completed"],
-            ["Index", "pending"],
-          ],
-          delayMs: 1_500,
-        },
-        {
-          steps: [
-            ["Scan", "completed"],
-            ["Index", "completed"],
-          ],
-        },
-      )}`,
+      `Index it. ${plan({
+        steps: [
+          ["Scan", "completed"],
+          ["Index", "pending"],
+        ],
+        delayMs: 1_500,
+      })}`,
     );
     await waitFor("the first turn", () => turnsSince(mark).length === 1);
     // A hidden agent finishes its turn, and its queue waits: the continuation waits too.
@@ -960,20 +966,78 @@ try {
       true,
       "The request waits for its continuation.",
     );
-    await runCauseEffect(current.service.stop());
-    current.database.close();
-    current = openService();
-    await runCauseEffect(current.service.initialize());
+    await restart();
     const since = current.events.length;
     await runCauseEffect(current.service.setAgentHidden({ agentId: agent.id, hidden: false }));
     assert.equal(await settled(id), "completed", "The request completes.");
-    assert.equal(turnsSince(mark).length, 1, "No continuation turn runs after the restart.");
+    const turns = turnsSince(mark);
+    assert.deepEqual(
+      turns.map((turn) => turn.note),
+      [false, true],
+      "One continuation turn runs after the restart.",
+    );
+    assert.ok(turns[1]?.text.includes("OpenBot restarted"), "The note says that OpenBot restarted.");
+    assert.ok(turns[1]?.text.includes("[pending] Index"), "The note names the open step.");
+    assert.ok(turns[1]?.text.includes("Automatic continuation 1 of 8."), "The count goes on from the stored turns.");
     assert.equal(
       current.service.listQueue(agent.id).deliveries.filter((delivery) => !ended(delivery.status)).length,
       0,
       "Nothing waits in the queue.",
     );
     assert.equal(errorsFor(agent.id, since).length, 0, "No error shows.");
+    return { turns: turns.length };
+  });
+
+  await check("a restart during a turn with open steps queues exactly one continuation", async () => {
+    const agent = await createAgent("Interrupted");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `Sync it. ${plan({
+        steps: [
+          ["Fetch", "completed"],
+          ["Merge", "inProgress"],
+        ],
+        planEarly: true,
+        delayMs: 60_000,
+      })}`,
+    );
+    await waitFor("the plan of the running turn", () =>
+      chatMessages(agent.id).some((message) => message.plan?.steps.some((step) => step.text === "Merge")),
+    );
+    await restart();
+    const since = current.events.length;
+    assert.equal(await settled(id), "completed", "The request completes.");
+    const turns = turnsSince(mark);
+    assert.deepEqual(
+      turns.map((turn) => turn.note),
+      [false, true],
+      "One continuation turn runs after the restart.",
+    );
+    assert.ok(turns[1]?.text.includes("OpenBot restarted"), "The note says that OpenBot restarted.");
+    assert.ok(turns[1]?.text.includes("[in progress] Merge"), "The note names the open step.");
+    assert.equal(errorsFor(agent.id, since).length, 0, "No error shows.");
+    // A second restart does not run the request again.
+    await restart();
+    await runCauseEffect(current.service.setAgentHidden({ agentId: agent.id, hidden: false }));
+    const next = await send(agent.id, "Thanks.");
+    assert.equal(await settled(next), "completed");
+    assert.deepEqual(
+      turnsSince(mark).map((turn) => turn.note),
+      [false, true, false],
+      "No other continuation turn runs.",
+    );
+    return { turns: turns.length };
+  });
+
+  await check("a restart during a turn without a plan ends the turn as before", async () => {
+    const agent = await createAgent("Planless");
+    const mark = loggedTurns().length;
+    const id = await send(agent.id, `Wait a bit. ${plan({ steps: [], delayMs: 60_000 })}`);
+    await waitFor("the running turn", () => turnsSince(mark).length === 1);
+    await restart();
+    assert.equal(await settled(id), "interrupted", "The request ends as interrupted.");
+    assert.equal(turnsSince(mark).length, 1, "No continuation turn runs.");
     return { turns: 1 };
   });
 

@@ -1,3 +1,4 @@
+import { CONVERSATION_PLAN_ITEM_TYPE, type ConversationSnapshot } from "@openbot/contracts/ipc";
 import { Cause, Effect, Schema } from "effect";
 import type { AgentProvider } from "../agent-client";
 import type { AgentStore } from "../agent-store";
@@ -11,6 +12,7 @@ import type { ConversationRuntime } from "./conversation-runtime";
 import { conversationContentSignature } from "./delivery-content";
 import { markIncompleteImageGeneration } from "./image-generation";
 import type { MailboxSync } from "./mailbox-sync";
+import type { PlanContinuation } from "./plan-continuation";
 import type { ProviderRuntime } from "./provider-runtime";
 import { stopRunningSubagents } from "./subagent-updates";
 import { isCodexMissingRollout, isCodexRolloutPending, providerForAgent } from "./thread-items";
@@ -40,6 +42,7 @@ export interface BootRecoveryOptions {
   conversation: ConversationRuntime;
   mailboxSync: MailboxSync;
   threads: ThreadLifecycle;
+  planContinuation: PlanContinuation;
   hooks: BootRecoveryHooks;
 }
 
@@ -57,6 +60,11 @@ export interface BootRecoveryOptions {
  *   exited. Any other unsettled delivery is a live turn of this run.
  * - `backfillProviderHistory` merges provider-side turns that happened while
  *   OpenBot was down into the persisted conversation.
+ * - A request whose plan had open steps when OpenBot stopped continues once
+ *   more: its continuation waited in the queue, or the restart interrupted its
+ *   turn. The chain is built again from the stored turns and plan, with the
+ *   same limit; a routine run in its own session does not continue, because
+ *   its session ended with the process.
  *
  * Reads the store/mailbox/provider and writes the database plus in-memory
  * snapshots; delivery to the renderer goes through `mailboxSync` and
@@ -69,7 +77,13 @@ export class BootRecovery {
   readonly #conversation: ConversationRuntime;
   readonly #mailboxSync: MailboxSync;
   readonly #threads: ThreadLifecycle;
+  readonly #planContinuation: PlanContinuation;
   readonly #hooks: BootRecoveryHooks;
+  /**
+   * The deliveries that the previous OpenBot run left unsettled. Only these can continue their plan
+   * after the restart; a delivery that a provider CLI exit orphaned ends as before.
+   */
+  readonly #restartedDeliveryIds = new Set<string>();
   /**
    * Readiness also follows a provider restart, and startup readiness can come after the user's
    * first message has started on a provider that was ready sooner. Settling every unresolved
@@ -90,6 +104,7 @@ export class BootRecovery {
     this.#conversation = options.conversation;
     this.#mailboxSync = options.mailboxSync;
     this.#threads = options.threads;
+    this.#planContinuation = options.planContinuation;
     this.#hooks = options.hooks;
   }
 
@@ -154,11 +169,11 @@ export class BootRecovery {
       const ids = unconfirmedStarts.get(laneOf(delivery)) ?? new Set<string>();
       unconfirmedStarts.set(laneOf(delivery), ids.add(delivery.id));
     }
-    for (const { delivery } of unresolved) {
+    for (const { delivery, planContinuation } of unresolved) {
       if (!this.#orphanedDeliveryIds.delete(delivery.id)) continue;
       const batchIds = delivery.turnId ? null : (unconfirmedStarts.get(laneOf(delivery)) ?? null);
       // One delivery that cannot settle must not leave the others of this pass running (#2214).
-      yield* this.#reconcileOrphanedDelivery(delivery, batchIds).pipe(
+      yield* this.#reconcileOrphanedDelivery(delivery, batchIds, planContinuation?.turnIds ?? []).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
@@ -177,6 +192,7 @@ export class BootRecovery {
     this: BootRecovery,
     delivery: UnresolvedDelivery,
     batchIds: ReadonlySet<string> | null,
+    earlierTurnIds: readonly string[],
   ) {
     const interrupted = {
       terminal: "interrupted" as const,
@@ -242,7 +258,16 @@ export class BootRecovery {
       return interrupted;
     }).pipe(Effect.catch(() => Effect.succeed(interrupted)));
     // A failed provider read keeps the conservative interrupted result; never replay side effects.
-    yield* this.#mailbox.markTerminal(delivery.id, terminal, reason).pipe(toBootRecoveryFailed);
+    // A turn that the restart interrupted while its plan had open steps continues once more, with a
+    // note that tells the agent to check the saved work first. The interrupted turn does not run again.
+    const continues =
+      terminal === "interrupted" &&
+      delivery.turnId !== null &&
+      this.#restartedDeliveryIds.delete(delivery.id) &&
+      (yield* recoveryStep(() => this.#restorePlan(delivery, [...earlierTurnIds, delivery.turnId ?? ""])));
+    if (continues && delivery.turnId)
+      yield* this.#mailbox.requeueForPlan(delivery.id, delivery.turnId).pipe(toBootRecoveryFailed);
+    else yield* this.#mailbox.markTerminal(delivery.id, terminal, reason).pipe(toBootRecoveryFailed);
     yield* recoveryStep(() => {
       const agent = this.#store.list().find((candidate) => candidate.id === delivery.recipientAgentId);
       const threadId = this.#hooks.deliveryThreadId?.(delivery.id) ?? agent?.threadId;
@@ -276,12 +301,51 @@ export class BootRecovery {
         this.#conversation.publishConversation(snapshot);
       }
       this.#mailboxSync.emitQueue(delivery.recipientAgentId);
-      this.#hooks.deliverySettled?.(delivery.id, terminal);
+      if (!continues) this.#hooks.deliverySettled?.(delivery.id, terminal);
     });
   });
 
+  /**
+   * Restores the plan chain of one request after the restart, from the plans that its turns stored
+   * (`turnIds`, in order). Only a message of the user or of an agent, in the agent's own chat or in
+   * a task: a channel or messaging thread does not continue, and a routine run's own session ended
+   * with the process. A turn that asked the user a question does not continue either. Returns
+   * whether the chain was restored.
+   */
+  #restorePlan(delivery: UnresolvedDelivery, turnIds: readonly string[]): boolean {
+    if (delivery.sender.kind !== "user" && delivery.sender.kind !== "agent") return false;
+    const agent = this.#store.list().find((candidate) => candidate.id === delivery.recipientAgentId);
+    if (!agent) return false;
+    const threadId = this.#hooks.deliveryThreadId?.(delivery.id) ?? agent.threadId;
+    if (!threadId || (threadId !== agent.threadId && !this.#conversation.isTaskThread(threadId))) return false;
+    const snapshot = this.#conversation.ensureSnapshot(agent.id, threadId);
+    const turns = new Set(turnIds);
+    const lastTurnId = turnIds.at(-1);
+    if (snapshot.messages.some((message) => message.turnId === lastTurnId && message.questionPrompt)) return false;
+    return this.#planContinuation.restore({
+      agentId: agent.id,
+      taskId: this.#mailbox.taskIdForDelivery(delivery.id),
+      deliveryIds: [delivery.id],
+      turnIds,
+      ...requestPlans(snapshot, turns),
+    });
+  }
+
+  /**
+   * The continuations that waited in the queue when OpenBot stopped. Each lane gets its chain back,
+   * so the drain starts the continuation instead of settling it.
+   */
+  #restoreWaitingContinuations(): void {
+    for (const { delivery, planContinuation } of this.#mailbox.waitingPlanContinuations()) {
+      this.#restorePlan(delivery, planContinuation?.turnIds ?? []);
+    }
+  }
+
   recoverPersistedTurns(): void {
-    for (const { delivery } of this.#mailbox.unresolvedDeliveries()) this.#orphanedDeliveryIds.add(delivery.id);
+    for (const { delivery } of this.#mailbox.unresolvedDeliveries()) {
+      this.#orphanedDeliveryIds.add(delivery.id);
+      this.#restartedDeliveryIds.add(delivery.id);
+    }
     const runningTurns = this.#store.database.readRunningTurnIds();
     for (const agent of this.threads()) {
       if (!agent.threadId) continue;
@@ -325,6 +389,7 @@ export class BootRecovery {
       snapshot.revision = revision;
       this.#conversation.setSnapshot(agent.id, snapshot);
     }
+    this.#restoreWaitingContinuations();
   }
 
   readonly backfillProviderHistory = Effect.fn("BootRecovery.backfillProviderHistory")(function* (this: BootRecovery) {
@@ -407,6 +472,24 @@ export class BootRecovery {
     const signature = conversationContentSignature(published);
     if (!live || signature !== previousSignature) this.#conversation.publishConversation(published, signature);
   }
+}
+
+/**
+ * The newest plan of the turns of one request, and the chat's plan from before its first turn. Both
+ * are null when no turn of the request is in the snapshot.
+ */
+function requestPlans(snapshot: ConversationSnapshot, turnIds: ReadonlySet<string>) {
+  const first = snapshot.messages.findIndex((message) => message.turnId !== undefined && turnIds.has(message.turnId));
+  if (first < 0) return { plan: null, earlierPlan: null };
+  const isPlan = (message: ConversationSnapshot["messages"][number]) =>
+    message.itemType === CONVERSATION_PLAN_ITEM_TYPE && message.plan !== undefined;
+  return {
+    plan:
+      snapshot.messages.findLast(
+        (message) => isPlan(message) && message.turnId !== undefined && turnIds.has(message.turnId),
+      )?.plan ?? null,
+    earlierPlan: snapshot.messages.slice(0, first).findLast(isPlan)?.plan ?? null,
+  };
 }
 
 class BootRecoveryFailed extends Schema.TaggedError<BootRecoveryFailed>()("BootRecoveryFailed", {
