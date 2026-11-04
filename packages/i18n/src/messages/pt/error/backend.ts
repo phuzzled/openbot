@@ -212,6 +212,8 @@ export const messages = {
     "Informe wakeAt como um horário ISO 8601 com fuso horário, como 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "O horário para despertar deve estar no futuro e a no máximo 30 dias. wakeAfterMinutes deve estar entre 5 e 43200.",
+  "error.backend.agentWaitWakeCap":
+    "Esta espera despertou no horário {limit} vezes, o máximo. Não verifique de novo: diga ao usuário o que você encontrou e o que ainda está pendente e depois feche a espera com openbot.close_wait.",
   "error.backend.agentWaitRemoteUnsupported": "As esperas abertas só estão disponíveis para agentes neste computador.",
   "error.backend.markUnreadRemoteUnsupported":
     "Marcar uma mensagem como não lida só está disponível para agentes neste computador.",

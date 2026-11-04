@@ -6,3 +6,4 @@
   open waits above the message box shows when each wait wakes.
   A routine run does not wake a wait that has a time: only its time, a routine that it names, or a
   script event does.
+  The time of one wait wakes it at most 20 times; then the agent reports to you and closes it.

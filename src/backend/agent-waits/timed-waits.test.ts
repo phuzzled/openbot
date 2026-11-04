@@ -9,7 +9,7 @@ import type { OpenBotToolResponse } from "../agent/routine-tools";
 import type { DeliveryContext } from "../mailbox-store";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import { AgentWaitStore } from "./agent-wait-store";
-import { AgentWaits, AWAIT_EVENT_TOOL, awaitEventToolSchema, turnLeavesWaitOpen } from "./agent-waits";
+import { AgentWaits, AWAIT_EVENT_TOOL, awaitEventToolSchema, TIME_WAKES_MAX, turnLeavesWaitOpen } from "./agent-waits";
 import { TimedWaitWakes } from "./timed-wait-wakes";
 
 const AGENT = "agent-1";
@@ -291,6 +291,33 @@ describe("timed wait wakes", () => {
     expect(turnLeavesWaitOpen(test.store.list(AGENT), ["user-2"])).toBe(false);
     test.store.delete(AGENT, test.store.list(AGENT)[0]?.id ?? "");
     expect(turnLeavesWaitOpen(test.store.list(AGENT), ["wake-1"])).toBe(false);
+  });
+});
+
+describe("time wake limit", () => {
+  it("refuses a new time after the wait woke at its time the most times, and tells the agent to report", async () => {
+    const test = harness();
+    test.call({ note: "Check vendor replies", wakeAfterMinutes: 5 });
+    let now = START.getTime();
+    for (let wake = 1; wake <= TIME_WAKES_MAX; wake += 1) {
+      now += 6 * MINUTE;
+      const due = new Date(now);
+      test.setNow(due);
+      await Effect.runPromise(test.wakes().processDue(due, () => true));
+      const deliveryId = `wake-${wake}`;
+      const woken = test.deliveries.get(deliveryId);
+      if (!woken) throw new Error(`Wake ${wake} is missing.`);
+      test.turns.set(`wake-turn-${wake}`, [woken]);
+      test.deliveries.set(deliveryId, { ...woken, delivery: { ...woken.delivery, status: "completed" } });
+      const again = test.call({ note: "Check again", wakeAfterMinutes: 5 }, `wake-turn-${wake}`);
+      if (wake < TIME_WAKES_MAX) expect(again.success, `wake ${wake}`).toBe(true);
+      else {
+        expect(again.success).toBe(false);
+        expect(String(again.value.error)).toContain("openbot.close_wait");
+      }
+    }
+    expect(test.store.list(AGENT)).toMatchObject([{ timeWakes: TIME_WAKES_MAX, wakeAt: null }]);
+    expect(test.enqueued).toHaveLength(TIME_WAKES_MAX);
   });
 });
 

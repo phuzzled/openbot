@@ -221,6 +221,8 @@ export const messages = {
     "Gib wakeAt als ISO-8601-Zeit mit Zeitzone an, zum Beispiel 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "Die Weckzeit muss in der Zukunft liegen und darf höchstens 30 Tage entfernt sein. wakeAfterMinutes muss zwischen 5 und 43200 liegen.",
+  "error.backend.agentWaitWakeCap":
+    "Dieser Wartevorgang wurde {limit}-mal zu seiner Zeit geweckt, öfter geht es nicht. Prüfe nicht erneut: Sag dem Benutzer, was du gefunden hast und was noch aussteht, und schließe den Wartevorgang dann mit openbot.close_wait.",
   "error.backend.agentWaitRemoteUnsupported":
     "Offene Wartevorgänge sind nur für Agenten auf diesem Computer verfügbar.",
   "error.backend.markUnreadRemoteUnsupported":

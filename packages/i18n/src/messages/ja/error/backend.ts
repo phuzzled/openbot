@@ -212,6 +212,8 @@ export const messages = {
     "wakeAt はタイムゾーン付きの ISO 8601 形式の時刻で指定してください（例: 2026-05-01T09:00:00+10:00）。",
   "error.backend.agentWaitWakeRange":
     "起床時刻は未来の、30 日以内の時刻にしてください。wakeAfterMinutes は 5 から 43200 の範囲で指定してください。",
+  "error.backend.agentWaitWakeCap":
+    "この待機は指定時刻に {limit} 回起床しており、これが上限です。再確認はせず、見つかったことと未完了のことをユーザーに伝えてから、openbot.close_wait で待機を閉じてください。",
   "error.backend.agentWaitRemoteUnsupported":
     "開いている待機は、このコンピューター上のエージェントでのみ使用できます。",
   "error.backend.markUnreadRemoteUnsupported":
