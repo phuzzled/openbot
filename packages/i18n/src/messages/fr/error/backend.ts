@@ -204,7 +204,9 @@ export const messages = {
   "error.backend.agentWaitGone": "Cette attente n’est pas ouverte. L’agent l’a fermée, ou quelqu’un l’a annulée.",
   "error.backend.agentWaitNoRequest": "Une attente a besoin d’un message pour continuer. Ce tour n’a pas de message.",
   "error.backend.agentWaitOwnChatOnly":
-    "Ouvrez une attente uniquement dans votre propre discussion. Une tâche de canal ou de messagerie ne peut pas attendre.",
+    "Ouvrez une attente dans votre propre discussion ou dans un fil de tâche. Une conversation de canal ou de messagerie ne peut pas attendre : son réveil s’exécuterait hors de cette conversation. Ne promettez pas de revenir ici ; dites à l’utilisateur de redemander plus tard, ou de vous le demander dans votre propre discussion.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "Dans un fil de tâche, une attente ne se réveille qu’à une heure donnée, dans cette tâche. Indiquez wakeAfterMinutes ou wakeAt, et pas de routineId.",
   "error.backend.agentWaitNoteRequired": "Indiquez une courte note qui précise l’objet de l’attente.",
   "error.backend.agentWaitRoutineGone": "Cet agent n’a pas de routine avec cet identifiant.",
   "error.backend.agentWaitNoRoutine":

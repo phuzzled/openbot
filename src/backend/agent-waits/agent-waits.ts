@@ -70,8 +70,13 @@ export interface AgentWaitsOptions {
 /** Where a wait was opened, as the tool router knows it. */
 export interface AgentWaitCaller {
   agentId: string;
-  /** A channel or messaging turn: its messages are not in the agent's own chat. */
+  /** A channel, messaging or task turn: its messages are not in the agent's own chat. */
   inExecutionThread: boolean;
+  /**
+   * A turn of a task side thread. It can open a wait with a time, and the wake runs in that task
+   * (`TimedWaitWakes`). Absent: not a task thread.
+   */
+  inTaskThread?: boolean;
 }
 
 /**
@@ -161,7 +166,11 @@ export class AgentWaits {
             : z.prettifyError(parsed.error),
       );
     const { note, routineId } = parsed.data;
-    if (caller.inExecutionThread) return openBotToolFailure(sourceText("error.backend.agentWaitOwnChatOnly"));
+    // A channel or messaging turn cannot wait: its wake would run outside that conversation. A task
+    // thread can, with a time: the wake runs in the task.
+    const inTask = caller.inTaskThread === true;
+    if (caller.inExecutionThread && !inTask)
+      return openBotToolFailure(sourceText("error.backend.agentWaitOwnChatOnly"));
     const wakeAt = this.#wakeAt(parsed.data);
     if (wakeAt instanceof AgentWaitError) return openBotToolFailure(wakeAt.message);
     const deliveries = this.#mailbox.findDeliveriesByTurn(caller.agentId, params.turnId);
@@ -198,6 +207,8 @@ export class AgentWaits {
     const request =
       deliveries.findLast((context) => context.delivery.sender.kind === "user") ?? deliveries.at(0) ?? null;
     if (!request) return openBotToolFailure(sourceText("error.backend.agentWaitNoRequest"));
+    // A routine run wakes in the agent's own chat or the routine's thread, never in a task.
+    if (inTask && (!wakeAt || routineId)) return openBotToolFailure(sourceText("error.backend.agentWaitTaskNeedsTime"));
     if (routineId && !this.#hooks.ownsRoutine(caller.agentId, routineId))
       return openBotToolFailure(sourceText("error.backend.agentWaitRoutineGone"));
     // A wake time wakes the wait by itself. Without one, only a routine run can.
@@ -239,7 +250,7 @@ export class AgentWaits {
         ? "the next run of any of your routines"
         : null;
     const wakes = [
-      wait.wakeAt ? `OpenBot wakes this wait at ${wait.wakeAt} in your own chat` : null,
+      wait.wakeAt ? `OpenBot wakes this wait at ${wait.wakeAt} in ${inTask ? "this task" : "your own chat"}` : null,
       runWakes,
       "a script event that names it",
     ]

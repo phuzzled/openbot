@@ -185,7 +185,9 @@ export const messages = {
   "error.backend.agentWaitGone": "이 대기는 열려 있지 않아요. 에이전트가 닫았거나 누군가 취소했어요.",
   "error.backend.agentWaitNoRequest": "대기를 이어가려면 메시지가 필요한데, 이 턴에는 메시지가 없어요.",
   "error.backend.agentWaitOwnChatOnly":
-    "대기는 자신의 채팅에서만 열 수 있어요. 채널이나 메시징 작업에서는 대기할 수 없어요.",
+    "대기는 자신의 채팅이나 작업 스레드에서 열 수 있어요. 채널이나 메시징 대화에서는 대기할 수 없어요. 깨어나는 작업이 그 대화 밖에서 실행되기 때문이에요. 여기서 다시 확인하겠다고 약속하지 말고, 나중에 다시 묻거나 자신의 채팅에서 요청하라고 사용자에게 알려 주세요.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "작업 스레드에서는 대기가 지정한 시간에만 이 작업 안에서 깨어나요. wakeAfterMinutes 또는 wakeAt을 지정하고 routineId는 지정하지 마세요.",
   "error.backend.agentWaitNoteRequired": "대기 목적을 알려 주는 짧은 메모를 입력하세요.",
   "error.backend.agentWaitRoutineGone": "이 에이전트에는 이 ID의 루틴이 없어요.",
   "error.backend.agentWaitNoRoutine":

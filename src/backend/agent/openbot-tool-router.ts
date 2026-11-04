@@ -1063,11 +1063,11 @@ export class OpenBotToolRouter {
     const memoryResult = this.#memories.handleTool(params, senderAgentId, this.#hooks.redactMcp);
     if (memoryResult) return memoryResult;
 
+    const callerThreadId = this.#conversation.publicThreadId(senderAgentId, params.threadId);
     const caller = {
       agentId: senderAgentId,
-      inExecutionThread: this.#conversation.isExecutionThread(
-        this.#conversation.publicThreadId(senderAgentId, params.threadId),
-      ),
+      inExecutionThread: this.#conversation.isExecutionThread(callerThreadId),
+      inTaskThread: this.#tasks.taskForThread(callerThreadId) !== null,
     };
     const waitResult = this.#waits.handleTool(params, caller);
     if (waitResult) return waitResult;

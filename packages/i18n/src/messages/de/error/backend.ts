@@ -209,7 +209,9 @@ export const messages = {
   "error.backend.agentWaitNoRequest":
     "Ein Wartevorgang braucht eine Nachricht, um fortzufahren. Dieser Durchlauf hat keine Nachricht.",
   "error.backend.agentWaitOwnChatOnly":
-    "Öffne einen Wartevorgang nur in deinem eigenen Chat. Eine Kanal- oder Messaging-Aufgabe kann nicht warten.",
+    "Öffne einen Wartevorgang in deinem eigenen Chat oder in einem Aufgaben-Thread. Eine Kanal- oder Messaging-Unterhaltung kann nicht warten: Ihr Wecken liefe außerhalb dieser Unterhaltung. Versprich hier nicht, später nachzusehen; sag dem Benutzer, dass er später erneut fragen oder dich in deinem eigenen Chat fragen soll.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "In einem Aufgaben-Thread wird ein Wartevorgang nur zu einer Zeit geweckt, in dieser Aufgabe. Gib wakeAfterMinutes oder wakeAt an und keine routineId.",
   "error.backend.agentWaitNoteRequired": "Gib eine kurze Notiz an, wofür der Wartevorgang ist.",
   "error.backend.agentWaitRoutineGone": "Dieser Agent hat keine Routine mit dieser ID.",
   "error.backend.agentWaitNoRoutine":

@@ -186,7 +186,10 @@ export const messages = defineMessages("error.backend", {
     "This agent already has {count} open waits. Close a wait with openbot.close_wait before you open another one.",
   "error.backend.agentWaitGone": "This wait is not open. The agent closed it, or someone cancelled it.",
   "error.backend.agentWaitNoRequest": "A wait needs a message to continue. This turn has no message.",
-  "error.backend.agentWaitOwnChatOnly": "Open a wait only in your own chat. A channel or messaging task cannot wait.",
+  "error.backend.agentWaitOwnChatOnly":
+    "Open a wait in your own chat or in a task thread. A channel or messaging conversation cannot wait: its wake would run outside that conversation. Do not promise to check back here; tell the user to ask again later, or to ask you in your own chat.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "In a task thread, a wait wakes only at a time, in this task. Give wakeAfterMinutes or wakeAt, and no routineId.",
   "error.backend.agentWaitNoteRequired": "Give a short note that says what the wait is for.",
   "error.backend.agentWaitRoutineGone": "This agent has no routine with this id.",
   "error.backend.agentWaitNoRoutine":

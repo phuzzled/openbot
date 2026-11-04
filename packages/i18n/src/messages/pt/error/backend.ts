@@ -200,7 +200,9 @@ export const messages = {
   "error.backend.agentWaitGone": "Esta espera não está aberta. O agente a fechou ou alguém a cancelou.",
   "error.backend.agentWaitNoRequest": "Uma espera precisa de uma mensagem para continuar. Este turno não tem mensagem.",
   "error.backend.agentWaitOwnChatOnly":
-    "Abra uma espera apenas no seu próprio chat. Uma tarefa de canal ou de mensagens não pode esperar.",
+    "Abra uma espera no seu próprio chat ou em uma conversa de tarefa. Uma conversa de canal ou de mensagens não pode esperar: o despertar dela rodaria fora dessa conversa. Não prometa verificar depois aqui; diga ao usuário para perguntar de novo mais tarde ou para pedir isso no seu próprio chat.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "Em uma conversa de tarefa, uma espera só desperta em um horário, nesta tarefa. Informe wakeAfterMinutes ou wakeAt, sem routineId.",
   "error.backend.agentWaitNoteRequired": "Escreva uma nota curta que diga para que serve a espera.",
   "error.backend.agentWaitRoutineGone": "Este agente não tem nenhuma rotina com este id.",
   "error.backend.agentWaitNoRoutine":

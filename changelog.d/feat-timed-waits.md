@@ -7,3 +7,4 @@
   A routine run does not wake a wait that has a time: only its time, a routine that it names, or a
   script event does.
   The time of one wait wakes it at most 20 times; then the agent reports to you and closes it.
+  An agent can also set a time to check back from a task, and the wake then runs in that task.

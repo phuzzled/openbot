@@ -198,7 +198,9 @@ export const messages = {
   "error.backend.agentWaitNoRequest":
     "Una espera necesita un mensaje para continuar. Este turno no tiene ningún mensaje.",
   "error.backend.agentWaitOwnChatOnly":
-    "Abre una espera solo en tu propio chat. Una tarea de canal o de mensajería no puede esperar.",
+    "Abre una espera en tu propio chat o en un hilo de tarea. Una conversación de canal o de mensajería no puede esperar: su activación se ejecutaría fuera de esa conversación. No prometas volver a comprobar aquí; dile al usuario que vuelva a preguntar más tarde o que te lo pida en tu propio chat.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "En un hilo de tarea, una espera solo se activa a una hora, en esta tarea. Indica wakeAfterMinutes o wakeAt, y no routineId.",
   "error.backend.agentWaitNoteRequired": "Escribe una nota breve que diga para qué es la espera.",
   "error.backend.agentWaitRoutineGone": "Este agente no tiene ninguna rutina con este id.",
   "error.backend.agentWaitNoRoutine":

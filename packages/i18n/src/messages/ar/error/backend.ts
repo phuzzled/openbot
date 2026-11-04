@@ -179,7 +179,10 @@ export const messages = {
     "لدى هذا الوكيل بالفعل {count} انتظارات مفتوحة. أغلق انتظارًا باستخدام openbot.close_wait قبل فتح انتظار آخر.",
   "error.backend.agentWaitGone": "هذا الانتظار غير مفتوح. أغلقه الوكيل، أو ألغاه شخص ما.",
   "error.backend.agentWaitNoRequest": "يحتاج الانتظار إلى رسالة للمتابعة. لا توجد رسالة في هذا الدور.",
-  "error.backend.agentWaitOwnChatOnly": "افتح انتظارًا في دردشتك فقط. لا يمكن لمهمة قناة أو مراسلة أن تنتظر.",
+  "error.backend.agentWaitOwnChatOnly":
+    "افتح انتظارًا في دردشتك أو في سلسلة مهمة. لا يمكن لمحادثة قناة أو مراسلة أن تنتظر: فإيقاظها سيعمل خارج تلك المحادثة. لا تعد بالمتابعة هنا؛ اطلب من المستخدم أن يسأل مرة أخرى لاحقًا، أو أن يطلب منك ذلك في دردشتك.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "في سلسلة مهمة، لا يستيقظ الانتظار إلا في وقت محدد، داخل هذه المهمة. حدّد wakeAfterMinutes أو wakeAt، ولا تحدّد routineId.",
   "error.backend.agentWaitNoteRequired": "اكتب ملاحظة قصيرة توضح سبب الانتظار.",
   "error.backend.agentWaitRoutineGone": "ليس لدى هذا الوكيل مهمة دورية بهذا المعرّف.",
   "error.backend.agentWaitNoRoutine":
