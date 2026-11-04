@@ -128,7 +128,7 @@ export class HostReleaseService {
 
 /** The version of the latest published release for `target`. Rejects on any fault of the feed. */
 async function fetchLatestRelease(target: ReleaseTarget, request: typeof fetch, signal: AbortSignal): Promise<string> {
-  const response = await request(`https://github.com/nightly-labs/openbot/releases/latest/download/${target.feed}`, {
+  const response = await request(`https://github.com/phuzzled/openbot/releases/latest/download/${target.feed}`, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
   });
   if (!response.ok || !response.body) {
