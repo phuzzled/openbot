@@ -36,6 +36,11 @@ export interface BootRecoveryHooks {
    * routine, whose record is gone. A Test, script or webhook run cannot.
    */
   quietRoutineDelivery(deliveryId: string): boolean;
+  /**
+   * Whether the agent has an open wait that one of these deliveries opened, or woke and left open. The
+   * turn chose to wait, so a restart does not continue it.
+   */
+  hasOpenWait(agentId: string, deliveryIds: readonly string[]): boolean;
   emitError(code: string, error: unknown, agentId?: string): void;
 }
 
@@ -316,12 +321,13 @@ export class BootRecovery {
    * a task: a channel or messaging thread does not continue, and a routine run's own session ended
    * with the process. A turn that asked the user a question does not continue either. When the
    * restart `interrupted` the last turn, that turn also must not have done an outward action that
-   * OpenBot recorded (`didOutwardAction`). Returns whether the chain was restored.
+   * OpenBot recorded (`didOutwardAction`). A request that left a wait open waits for it, as it does
+   * with no restart (`hasOpenWait`). Returns whether the chain was restored.
    */
   #restorePlan(delivery: UnresolvedDelivery, turnIds: readonly string[], interrupted = false): boolean {
     if (delivery.sender.kind !== "user" && delivery.sender.kind !== "agent") return false;
     const agent = this.#store.list().find((candidate) => candidate.id === delivery.recipientAgentId);
-    if (!agent) return false;
+    if (!agent || this.#hooks.hasOpenWait(agent.id, [delivery.id])) return false;
     const threadId = this.#hooks.deliveryThreadId?.(delivery.id) ?? agent.threadId;
     if (!threadId || (threadId !== agent.threadId && !this.#conversation.isTaskThread(threadId))) return false;
     const snapshot = this.#conversation.ensureSnapshot(agent.id, threadId);
