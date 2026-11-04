@@ -19,6 +19,7 @@
 //   6. Stop during a continuation ends the chain. The next message works.
 //   7. A message that waits in the queue stops the continuation and runs next.
 //   8. A side thread continues in its own thread only.
+//   8a. A turn that a teammate's message started continues; the teammate gets one result.
 //   9. A routine run continues in its own session, and its run ends once with the last answer.
 //  10. A restart while a continuation waits completes the request with no new turn.
 // Not checked: a message sent in the short gap before a continuation starts. The drain starts the
@@ -61,10 +62,12 @@ interface FakeTurn {
   steps: [string, StepStatus][];
   answer?: string;
   delayMs?: number;
-  calls?: { tool: string; arguments: Record<string, string> }[];
+  calls?: { tool: string; arguments: Record<string, string | string[]> }[];
 }
 
-const plan = (...turns: FakeTurn[]) => `<<PLAN${JSON.stringify(turns)}PLAN>>`;
+// "<" and ">" are escaped, so a plan in a message that a turn sends does not end the plan around it.
+const plan = (...turns: FakeTurn[]) =>
+  `<<PLAN${JSON.stringify(turns).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e")}PLAN>>`;
 
 const FAKE_CODEX = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -759,6 +762,66 @@ try {
     assert.equal(continuationLines(agent.id, task.threadId).length, 1, "The side thread shows the line.");
     assert.equal(continuationLines(agent.id).length, 0, "The agent's own chat shows no line.");
     return { taskId: task.id };
+  });
+
+  await check("a turn that a teammate's message started continues, and the teammate gets one result", async () => {
+    const lead = await createAgent("Lead");
+    const helper = await createAgent("Helper");
+    const mark = loggedTurns().length;
+    const request = `Check the logs. ${plan(
+      {
+        steps: [
+          ["Read the logs", "completed"],
+          ["Write the summary", "pending"],
+        ],
+        answer: "The logs are read.",
+      },
+      {
+        steps: [
+          ["Read the logs", "completed"],
+          ["Write the summary", "completed"],
+        ],
+        answer: "The summary is written.",
+      },
+    )}`;
+    const id = await send(
+      lead.id,
+      `Ask the helper. ${plan({
+        steps: [],
+        calls: [{ tool: "send_message", arguments: { recipientAgentIds: [helper.id], text: request } }],
+        answer: "I asked the helper.",
+      })}`,
+    );
+    assert.equal(await settled(id), "completed");
+    // The lead's own request names the helper's plan too, so the helper's turn is the other one.
+    const helperThread = await waitFor(
+      "the helper's turn",
+      () =>
+        turnsSince(mark).find((turn) => turn.text.includes("Check the logs.") && !turn.text.includes("Ask the helper."))
+          ?.threadId,
+    );
+    const leadThread = turnsSince(mark)[0]?.threadId;
+    await waitFor("the result for the lead", () =>
+      turnsSince(mark).some(
+        (turn) =>
+          turn.threadId === leadThread && !turn.text.includes("Ask the helper.") && turn.text.includes("The summary"),
+      ),
+    );
+    const turns = turnsSince(mark).filter((turn) => turn.threadId === helperThread);
+    assert.deepEqual(
+      turns.map((turn) => turn.note),
+      [false, true],
+      "The helper runs one continuation turn.",
+    );
+    assert.ok(turns[1]?.text.includes("[pending] Write the summary"), "The note names the open step.");
+    assert.equal(continuationLines(helper.id).length, 1, "The helper's chat shows one line.");
+    const results = current.service
+      .listQueue(lead.id)
+      .deliveries.filter((delivery) => delivery.sender.kind === "agent" && delivery.sender.agentId === helper.id);
+    assert.equal(results.length, 1, "The lead gets one result.");
+    assert.ok(results[0]?.text.includes("The summary is written."), "The result is the answer of the last turn.");
+    assert.ok(!results[0]?.text.includes("The logs are read."), "The result is not the first answer.");
+    return { helperTurns: turns.length, results: results.length };
   });
 
   await check("a routine run continues in its own session and ends with one result", async () => {

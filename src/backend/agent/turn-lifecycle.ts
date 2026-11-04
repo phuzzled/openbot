@@ -485,9 +485,11 @@ export class TurnLifecycle {
   }
 
   /**
-   * Whether a completed turn may continue its plan: it served only messages of the user, of an agent,
-   * or, in the run's own session (`routineRun`), of a routine; the user did not stop it, its last line asks nothing but whether to continue and does not say it waits, opened no wait and holds no question,
-   * approval or takeover, and no other message waits in its lane.
+   * Whether a completed turn may continue its plan: it served only messages of the user, of the agent
+   * itself or of a teammate, or, in the run's own session (`routineRun`), of a routine; the user did
+   * not stop it, its last line asks nothing but whether to continue and does not say it waits, opened
+   * no wait and holds no question, approval or takeover, and no other message waits in its lane. A
+   * teammate that asked for a result gets it after the last turn of the chain.
    */
   #planContinues(
     agentId: string,
@@ -503,7 +505,7 @@ export class TurnLifecycle {
         ({ delivery, channelId }) =>
           channelId === undefined &&
           (delivery.sender.kind === "user" ||
-            (delivery.sender.kind === "agent" && delivery.sender.agentId === agentId) ||
+            delivery.sender.kind === "agent" ||
             (delivery.sender.kind === "routine" && routineRun)),
       )
     )
