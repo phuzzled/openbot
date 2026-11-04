@@ -111,6 +111,7 @@ export const messages = defineMessages("chat", {
   "chat.waits.state.resuming": "Continuing the request",
   "chat.waits.state.woken": "Woke, not closed",
   "chat.waits.request": "For “{text}”",
+  "chat.waits.wakesAt": "Wakes {time}",
   "chat.waits.actions": "More actions: {note}",
   "chat.waits.showRequest": "Show the request",
   "chat.waits.cancel": "Cancel the wait",

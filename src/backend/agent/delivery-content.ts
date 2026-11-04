@@ -11,7 +11,7 @@ import type {
   RoutineRun,
 } from "@openbot/contracts/ipc";
 import { redactText } from "@openbot/logging";
-import { wokenWaitsPromptText } from "../agent-waits/agent-waits";
+import { AWAIT_EVENT_TOOL, wokenWaitsPromptText } from "../agent-waits/agent-waits";
 import { homeSkillRoot, homeSkillTagSlug } from "../home-skills";
 import type { DeliveryContext } from "../mailbox-store";
 import { quietRoutineRun, ROUTINE_NO_UPDATE_TOOL, ROUTINE_REPORT_FAILURE_TOOL } from "./routine-quiet-runs";
@@ -81,7 +81,7 @@ export interface DeliveryPromptSources {
   /** The conversation the delivery joins. A user reply quotes the message it answers from it. */
   snapshot: ConversationSnapshot;
   routineRun: Pick<RoutineRun, "kind" | "source"> | null;
-  /** The open waits that a routine run wakes. The run continues their requests. */
+  /** The open waits that a routine run or a wait wake wakes. The run continues their requests. */
   wokenWaits?: readonly AgentWait[];
   /** The prompt a channel task or an external message sends in place of the delivery text. */
   executionText?: string | undefined;
@@ -171,6 +171,28 @@ function escapeRegExp(value: string): string {
 }
 
 /**
+ * Whether the delivery is the wake of timed waits (`TimedWaitWakes`): a message of an agent to itself
+ * that expects no answer. `start_task` sends the only other message of an agent to itself, the brief
+ * of a task, and a brief expects an answer.
+ */
+export function isWaitWakeDelivery(
+  delivery: Pick<QueueDelivery, "sender" | "recipientAgentId" | "expectsReply">,
+): boolean {
+  return (
+    delivery.sender.kind === "agent" &&
+    delivery.sender.agentId === delivery.recipientAgentId &&
+    delivery.expectsReply === false
+  );
+}
+
+/** Whether the run of this delivery can continue open waits: a routine run or the wake of timed waits. */
+export function deliveryWakesWaits(
+  delivery: Pick<QueueDelivery, "sender" | "recipientAgentId" | "expectsReply">,
+): boolean {
+  return delivery.sender.kind === "routine" || isWaitWakeDelivery(delivery);
+}
+
+/**
  * The provider input for one delivery. A new turn and a steer into the running turn both send it,
  * so a teammate's message is framed as collaborator input on either path.
  */
@@ -191,8 +213,18 @@ export function deliveryPromptInput(context: DeliveryContext, sources: DeliveryP
       displayText || "(The reply contains attachments only.)",
     ].join("\n");
   }
-  // Only `start_task` sends an agent's message to itself: it is the brief of a task.
-  if (delivery.sender.kind === "agent" && delivery.sender.agentId === delivery.recipientAgentId) {
+  if (isWaitWakeDelivery(delivery)) {
+    // The wake of timed waits. Its text is only the notes; the waits below give the requests.
+    text = [
+      `A wait that you opened with openbot.${AWAIT_EVENT_TOOL} and a wake time is due now. This is not a message from the user or from a teammate.`,
+      "Check the state of the work, and continue each request below. Tell the user what you found.",
+    ].join("\n");
+    const waits = wokenWaitsPromptText(sources.wokenWaits ?? []);
+    text += waits
+      ? `\n\n${waits}`
+      : `\n\nThe waits were closed or cancelled before this run started. Do nothing for them. Your notes:\n${displayText}`;
+  } else if (delivery.sender.kind === "agent" && delivery.sender.agentId === delivery.recipientAgentId) {
+    // `start_task` sends an agent's message to itself in a task: it is the brief of the task.
     text = [
       "You started this task with openbot.start_task from your own chat. It is a separate conversation beside that chat, with this brief as its first message.",
       "Do the work in the brief here, and end with the result for the user: the user reads it in this task. Do not send it with openbot.send_message.",

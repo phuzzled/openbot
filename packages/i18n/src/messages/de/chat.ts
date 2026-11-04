@@ -112,6 +112,7 @@ export const messages = {
   "chat.waits.state.resuming": "Anfrage wird fortgesetzt",
   "chat.waits.state.woken": "Geweckt, nicht geschlossen",
   "chat.waits.request": "Für „{text}“",
+  "chat.waits.wakesAt": "Weckzeit {time}",
   "chat.waits.actions": "Weitere Aktionen: {note}",
   "chat.waits.showRequest": "Anfrage anzeigen",
   "chat.waits.cancel": "Wartevorgang abbrechen",

@@ -99,6 +99,14 @@ the marker it skips the turn's thinking too, so a later import does not bring a 
 
 ## Routine sessions
 
+A wait with a wake time (`agent_waits.wake_at`, migration 56) needs no routine. `TimedWaitWakes` is
+one more source of the shared `RoutineTimer`, so a sleep or a held restart holds it as it holds the
+routines. A due wait of an agent that `RoutineScheduler.mayDrain` allows wakes in one message of the
+agent to itself in its own chat, with `expectsReply: false` (`isWaitWakeDelivery`); the chat shows it
+once, as received. `markWokenByTime` clears the time with the wake, so a wait wakes once, and a time
+missed while the app was closed fires once at the first pass. A wait that a pending run already
+continues loses its time and gets no second wake.
+
 A routine run in an agent's own chat (no task, channel or messaging delivery) does not resume the
 chat's provider session. `DrainScheduler.startDelivery` starts a new session for it with
 `ThreadLifecycle.startRoutineThread`: the chat's thread parameters, with `ephemeral: true` and

@@ -196,7 +196,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Кратко укажите, для чего это ожидание.",
   "error.backend.agentWaitRoutineGone": "У этого агента нет регулярной задачи с таким id.",
   "error.backend.agentWaitNoRoutine":
-    "Ожидание пробуждает только запуск одной из ваших регулярных задач, а у вас их нет. Создайте регулярную задачу с помощью openbot.create_routine, затем откройте ожидание.",
+    "Ожидание без времени пробуждения пробуждает только запуск одной из ваших регулярных задач, а у вас их нет. Чтобы проверить позже, вызовите openbot.await_event с wakeAfterMinutes. Чтобы ждать регулярную задачу, сначала создайте её с помощью openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "Укажите wakeAfterMinutes или wakeAt, но не оба.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Укажите wakeAt как время в формате ISO 8601 с часовым поясом, например 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "Время пробуждения должно быть в будущем и не дальше чем через 30 дней. wakeAfterMinutes должно быть от 5 до 43200.",
   "error.backend.agentWaitRemoteUnsupported": "Открытые ожидания доступны только для агентов на этом компьютере.",
   "error.backend.markUnreadRemoteUnsupported":
     "Отметить сообщение непрочитанным можно только для агентов на этом компьютере.",

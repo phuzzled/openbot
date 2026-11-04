@@ -190,7 +190,12 @@ export const messages = defineMessages("error.backend", {
   "error.backend.agentWaitNoteRequired": "Give a short note that says what the wait is for.",
   "error.backend.agentWaitRoutineGone": "This agent has no routine with this id.",
   "error.backend.agentWaitNoRoutine":
-    "Only a run of one of your routines wakes a wait, and you have no routine. Create one with openbot.create_routine, then open the wait.",
+    "Only a run of one of your routines wakes a wait with no wake time, and you have no routine. To check back later, call openbot.await_event with wakeAfterMinutes. To wait for a routine run, create one with openbot.create_routine first.",
+  "error.backend.agentWaitWakeBoth": "Give wakeAfterMinutes or wakeAt, not both.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Give wakeAt as an ISO 8601 time with a time zone, such as 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "The wake time must be in the future and at most 30 days away. wakeAfterMinutes must be from 5 to 43200.",
   "error.backend.agentWaitRemoteUnsupported": "Open waits are only available for agents on this computer.",
   "error.backend.markUnreadRemoteUnsupported":
     "Marking a message unread is only available for agents on this computer.",

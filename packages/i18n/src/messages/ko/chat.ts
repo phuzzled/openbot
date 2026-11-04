@@ -112,6 +112,7 @@ export const messages = {
   "chat.waits.state.resuming": "요청을 이어서 처리하는 중",
   "chat.waits.state.woken": "깨어났지만 닫히지 않음",
   "chat.waits.request": "“{text}” 요청",
+  "chat.waits.wakesAt": "{time}에 깨어남",
   "chat.waits.actions": "더 많은 작업: {note}",
   "chat.waits.showRequest": "요청 보기",
   "chat.waits.cancel": "대기 취소",

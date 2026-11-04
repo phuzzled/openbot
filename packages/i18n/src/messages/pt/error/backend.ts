@@ -204,7 +204,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Escreva uma nota curta que diga para que serve a espera.",
   "error.backend.agentWaitRoutineGone": "Este agente não tem nenhuma rotina com este id.",
   "error.backend.agentWaitNoRoutine":
-    "Somente uma execução de uma das suas rotinas desperta uma espera, e você não tem nenhuma rotina. Crie uma com openbot.create_routine e depois abra a espera.",
+    "Somente uma execução de uma das suas rotinas desperta uma espera sem horário para despertar, e você não tem nenhuma rotina. Para verificar mais tarde, chame openbot.await_event com wakeAfterMinutes. Para esperar uma rotina, crie uma antes com openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "Informe wakeAfterMinutes ou wakeAt, não ambos.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Informe wakeAt como um horário ISO 8601 com fuso horário, como 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "O horário para despertar deve estar no futuro e a no máximo 30 dias. wakeAfterMinutes deve estar entre 5 e 43200.",
   "error.backend.agentWaitRemoteUnsupported": "As esperas abertas só estão disponíveis para agentes neste computador.",
   "error.backend.markUnreadRemoteUnsupported":
     "Marcar uma mensagem como não lida só está disponível para agentes neste computador.",

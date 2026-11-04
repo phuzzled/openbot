@@ -6,8 +6,8 @@ import { isDynamicRecord } from "./runtime-values";
  * Work an agent stopped before it was done, because it waits for something outside the turn. The
  * agent opens the wait with `openbot.await_event`, lists it with `openbot.list_waits` and closes it
  * with `openbot.close_wait`; another local agent can list and close it with `agentId`. The user
- * can cancel it. A routine run of the agent, or a script event that names the wait, wakes it, and
- * the agent continues the request in that run.
+ * can cancel it. A routine run of the agent, a script event that names the wait, or the wake time
+ * that the agent gave, wakes it, and the agent continues the request in that run.
  */
 export interface AgentWait {
   id: string;
@@ -23,6 +23,11 @@ export interface AgentWait {
   /** The last run that woke the wait. The wait stays open until the agent closes it. */
   wokenAt: string | null;
   wakeDeliveryId: string | null;
+  /**
+   * When the wait wakes by itself, as an ISO time. Null: only a routine run or a script event wakes
+   * it. The wake clears it. Absent from a host older than this field, which means null.
+   */
+  wakeAt?: string | null;
 }
 
 export interface AgentWaitsSnapshot {
@@ -46,7 +51,8 @@ function isAgentWait(value: unknown): value is AgentWait {
     (value.routineId === null || isIdentifier(value.routineId)) &&
     isBoundedString(value.createdAt, 160) &&
     (value.wokenAt === null || isBoundedString(value.wokenAt, 160)) &&
-    (value.wakeDeliveryId === null || isIdentifier(value.wakeDeliveryId))
+    (value.wakeDeliveryId === null || isIdentifier(value.wakeDeliveryId)) &&
+    (value.wakeAt === undefined || value.wakeAt === null || isBoundedString(value.wakeAt, 160))
   );
 }
 

@@ -17,6 +17,7 @@ import {
   CURRENT_MESSAGE_SEPARATOR,
   combinedPromptInput,
   deliveryPromptInput,
+  deliveryWakesWaits,
 } from "./delivery-content";
 import type { DuplicationGate } from "./duplication-gate";
 import type { MailboxSync } from "./mailbox-sync";
@@ -795,7 +796,7 @@ export class DrainScheduler {
               snapshot,
               routineRun:
                 item.delivery.sender.kind === "routine" ? this.#routines.runForDelivery(item.delivery.id) : null,
-              wokenWaits: item.delivery.sender.kind === "routine" ? this.#routines.wokenWaits(item.delivery.id) : [],
+              wokenWaits: deliveryWakesWaits(item.delivery) ? this.#routines.wokenWaits(item.delivery.id) : [],
               ...(executionText === undefined ? {} : { executionText }),
             });
           }),

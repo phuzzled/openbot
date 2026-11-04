@@ -197,7 +197,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Podaj krótką notatkę, na co jest to oczekiwanie.",
   "error.backend.agentWaitRoutineGone": "Ten agent nie ma rutyny o tym identyfikatorze.",
   "error.backend.agentWaitNoRoutine":
-    "Oczekiwanie budzi tylko uruchomienie jednej z twoich rutyn, a nie masz żadnej rutyny. Utwórz ją za pomocą openbot.create_routine, a potem otwórz oczekiwanie.",
+    "Oczekiwanie bez czasu wybudzenia budzi tylko uruchomienie jednej z twoich rutyn, a nie masz żadnej rutyny. Aby sprawdzić później, wywołaj openbot.await_event z wakeAfterMinutes. Aby czekać na rutynę, najpierw utwórz ją za pomocą openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "Podaj wakeAfterMinutes albo wakeAt, nie oba naraz.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Podaj wakeAt jako czas ISO 8601 ze strefą czasową, na przykład 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "Czas wybudzenia musi być w przyszłości i najwyżej 30 dni od teraz. wakeAfterMinutes musi mieć wartość od 5 do 43200.",
   "error.backend.agentWaitRemoteUnsupported": "Otwarte oczekiwania są dostępne tylko dla agentów na tym komputerze.",
   "error.backend.markUnreadRemoteUnsupported":
     "Oznaczanie wiadomości jako nieprzeczytanej jest dostępne tylko dla agentów na tym komputerze.",

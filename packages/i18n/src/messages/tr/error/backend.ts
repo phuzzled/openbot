@@ -191,7 +191,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Beklemenin ne için olduğunu belirten kısa bir not yazın.",
   "error.backend.agentWaitRoutineGone": "Bu ajanın bu kimliğe sahip bir rutini yok.",
   "error.backend.agentWaitNoRoutine":
-    "Bir beklemeyi yalnızca rutinlerinizden birinin çalıştırılması uyandırır ve hiç rutininiz yok. openbot.create_routine ile bir rutin oluşturun, ardından beklemeyi açın.",
+    "Uyanma zamanı olmayan bir beklemeyi yalnızca rutinlerinizden birinin çalıştırılması uyandırır ve hiç rutininiz yok. Daha sonra tekrar bakmak için openbot.await_event'i wakeAfterMinutes ile çağırın. Bir rutini beklemek için önce openbot.create_routine ile bir rutin oluşturun.",
+  "error.backend.agentWaitWakeBoth": "wakeAfterMinutes veya wakeAt verin, ikisini birden değil.",
+  "error.backend.agentWaitWakeAtFormat":
+    "wakeAt değerini saat dilimi içeren bir ISO 8601 zamanı olarak verin, örneğin 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "Uyanma zamanı gelecekte olmalı ve en fazla 30 gün sonra olmalıdır. wakeAfterMinutes 5 ile 43200 arasında olmalıdır.",
   "error.backend.agentWaitRemoteUnsupported": "Açık beklemeler yalnızca bu bilgisayardaki ajanlar için kullanılabilir.",
   "error.backend.markUnreadRemoteUnsupported":
     "Bir mesajı okunmadı olarak işaretleme yalnızca bu bilgisayardaki ajanlar için kullanılabilir.",

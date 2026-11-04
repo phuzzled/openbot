@@ -213,7 +213,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Gib eine kurze Notiz an, wofür der Wartevorgang ist.",
   "error.backend.agentWaitRoutineGone": "Dieser Agent hat keine Routine mit dieser ID.",
   "error.backend.agentWaitNoRoutine":
-    "Nur eine Ausführung einer deiner Routinen weckt einen Wartevorgang, und du hast keine Routine. Erstelle eine mit openbot.create_routine und öffne dann den Wartevorgang.",
+    "Einen Wartevorgang ohne Weckzeit weckt nur eine Ausführung einer deiner Routinen, und du hast keine Routine. Um später nachzusehen, rufe openbot.await_event mit wakeAfterMinutes auf. Um auf eine Routine zu warten, erstelle zuerst eine mit openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "Gib wakeAfterMinutes oder wakeAt an, nicht beides.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Gib wakeAt als ISO-8601-Zeit mit Zeitzone an, zum Beispiel 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "Die Weckzeit muss in der Zukunft liegen und darf höchstens 30 Tage entfernt sein. wakeAfterMinutes muss zwischen 5 und 43200 liegen.",
   "error.backend.agentWaitRemoteUnsupported":
     "Offene Wartevorgänge sind nur für Agenten auf diesem Computer verfügbar.",
   "error.backend.markUnreadRemoteUnsupported":

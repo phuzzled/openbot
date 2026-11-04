@@ -167,6 +167,7 @@ export const messages = {
   "chat.waits.state.resuming": "Продолжение запроса",
   "chat.waits.state.woken": "Пробуждено, не закрыто",
   "chat.waits.request": "Для «{text}»",
+  "chat.waits.wakesAt": "Пробуждение {time}",
   "chat.waits.actions": "Другие действия: {note}",
   "chat.waits.showRequest": "Показать запрос",
   "chat.waits.cancel": "Отменить ожидание",

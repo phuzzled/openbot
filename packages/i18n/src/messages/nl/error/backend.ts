@@ -203,7 +203,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Geef een korte notitie die zegt waarvoor het wachtpunt is.",
   "error.backend.agentWaitRoutineGone": "Deze agent heeft geen routine met deze id.",
   "error.backend.agentWaitNoRoutine":
-    "Alleen een run van een van je routines wekt een wachtpunt, en je hebt geen routine. Maak er een met openbot.create_routine en open dan het wachtpunt.",
+    "Alleen een run van een van je routines wekt een wachtpunt zonder wektijd, en je hebt geen routine. Om later terug te kijken, roep je openbot.await_event aan met wakeAfterMinutes. Om op een routine te wachten, maak je er eerst een met openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "Geef wakeAfterMinutes of wakeAt op, niet allebei.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Geef wakeAt op als een ISO 8601-tijd met tijdzone, zoals 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "De wektijd moet in de toekomst liggen en hoogstens 30 dagen vooruit. wakeAfterMinutes moet tussen 5 en 43200 liggen.",
   "error.backend.agentWaitRemoteUnsupported": "Open wachtpunten zijn alleen beschikbaar voor agents op deze computer.",
   "error.backend.markUnreadRemoteUnsupported":
     "Een bericht als ongelezen markeren is alleen beschikbaar voor agents op deze computer.",

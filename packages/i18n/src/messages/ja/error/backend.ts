@@ -204,7 +204,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "待機の目的を示す短いメモを入力してください。",
   "error.backend.agentWaitRoutineGone": "このエージェントにはこの ID のルーティンがありません。",
   "error.backend.agentWaitNoRoutine":
-    "待機を再開できるのは自分のルーティンの実行だけですが、ルーティンがありません。openbot.create_routine でルーティンを作成してから、待機を開いてください。",
+    "起床時刻のない待機を再開できるのは自分のルーティンの実行だけですが、ルーティンがありません。後で確認するには、wakeAfterMinutes を指定して openbot.await_event を呼び出してください。ルーティンを待つには、先に openbot.create_routine でルーティンを作成してください。",
+  "error.backend.agentWaitWakeBoth": "wakeAfterMinutes と wakeAt のどちらか一方だけを指定してください。",
+  "error.backend.agentWaitWakeAtFormat":
+    "wakeAt はタイムゾーン付きの ISO 8601 形式の時刻で指定してください（例: 2026-05-01T09:00:00+10:00）。",
+  "error.backend.agentWaitWakeRange":
+    "起床時刻は未来の、30 日以内の時刻にしてください。wakeAfterMinutes は 5 から 43200 の範囲で指定してください。",
   "error.backend.agentWaitRemoteUnsupported":
     "開いている待機は、このコンピューター上のエージェントでのみ使用できます。",
   "error.backend.markUnreadRemoteUnsupported":

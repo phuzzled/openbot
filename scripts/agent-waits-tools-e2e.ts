@@ -85,6 +85,7 @@ const waits = new AgentWaits({
     emit: (event) => events.push(event),
     ownsRoutine: () => true,
     hasRoutine: () => true,
+    wakeTimesChanged: () => {},
     requireKnownAgent: (agentId) => {
       conversation.requireKnownAgent(agentId);
     },

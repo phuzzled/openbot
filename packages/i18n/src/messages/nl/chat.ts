@@ -112,6 +112,7 @@ export const messages = {
   "chat.waits.state.resuming": "Verzoek wordt hervat",
   "chat.waits.state.woken": "Gewekt, niet gesloten",
   "chat.waits.request": "Voor “{text}”",
+  "chat.waits.wakesAt": "Wektijd {time}",
   "chat.waits.actions": "Meer acties: {note}",
   "chat.waits.showRequest": "Verzoek tonen",
   "chat.waits.cancel": "Wachten annuleren",

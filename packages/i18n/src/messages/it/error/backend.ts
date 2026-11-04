@@ -204,7 +204,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Scrivi una breve nota che spieghi a cosa serve l'attesa.",
   "error.backend.agentWaitRoutineGone": "Questo agente non ha una routine con questo id.",
   "error.backend.agentWaitNoRoutine":
-    "Solo un'esecuzione di una delle tue routine risveglia un'attesa, e non hai routine. Creane una con openbot.create_routine, poi apri l'attesa.",
+    "Solo un'esecuzione di una delle tue routine risveglia un'attesa senza orario di risveglio, e non hai routine. Per ricontrollare più tardi, chiama openbot.await_event con wakeAfterMinutes. Per attendere una routine, creane prima una con openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "Indica wakeAfterMinutes o wakeAt, non entrambi.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Indica wakeAt come orario ISO 8601 con fuso orario, ad esempio 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "L'orario di risveglio deve essere nel futuro e al massimo tra 30 giorni. wakeAfterMinutes deve essere compreso tra 5 e 43200.",
   "error.backend.agentWaitRemoteUnsupported":
     "Le attese aperte sono disponibili solo per gli agenti su questo computer.",
   "error.backend.markUnreadRemoteUnsupported":

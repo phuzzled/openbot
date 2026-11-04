@@ -189,7 +189,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "대기 목적을 알려 주는 짧은 메모를 입력하세요.",
   "error.backend.agentWaitRoutineGone": "이 에이전트에는 이 ID의 루틴이 없어요.",
   "error.backend.agentWaitNoRoutine":
-    "대기를 깨우는 것은 내 루틴의 실행뿐인데, 루틴이 없어요. openbot.create_routine으로 루틴을 만든 후 대기를 여세요.",
+    "깨우는 시간이 없는 대기를 깨우는 것은 내 루틴의 실행뿐인데, 루틴이 없어요. 나중에 다시 확인하려면 wakeAfterMinutes와 함께 openbot.await_event를 호출하세요. 루틴을 기다리려면 먼저 openbot.create_routine으로 루틴을 만드세요.",
+  "error.backend.agentWaitWakeBoth": "wakeAfterMinutes와 wakeAt 중 하나만 지정하세요.",
+  "error.backend.agentWaitWakeAtFormat":
+    "wakeAt은 시간대를 포함한 ISO 8601 시간으로 지정하세요. 예: 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "깨우는 시간은 미래여야 하며 최대 30일 이내여야 해요. wakeAfterMinutes는 5에서 43200 사이여야 해요.",
   "error.backend.agentWaitRemoteUnsupported": "열린 대기는 이 컴퓨터의 에이전트에서만 사용할 수 있어요.",
   "error.backend.markUnreadRemoteUnsupported":
     "메시지를 읽지 않음으로 표시하는 기능은 이 컴퓨터의 에이전트에서만 사용할 수 있어요.",

@@ -203,6 +203,7 @@ export const messages = {
   "chat.waits.state.resuming": "متابعة الطلب",
   "chat.waits.state.woken": "استيقظ، غير مغلق",
   "chat.waits.request": "لأجل «{text}»",
+  "chat.waits.wakesAt": "الإيقاظ {time}",
   "chat.waits.actions": "مزيد من الإجراءات: {note}",
   "chat.waits.showRequest": "إظهار الطلب",
   "chat.waits.cancel": "إلغاء الانتظار",
