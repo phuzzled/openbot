@@ -185,7 +185,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "اكتب ملاحظة قصيرة توضح سبب الانتظار.",
   "error.backend.agentWaitRoutineGone": "ليس لدى هذا الوكيل مهمة دورية بهذا المعرّف.",
   "error.backend.agentWaitNoRoutine":
-    "لا يوقظ الانتظار إلا تشغيل إحدى مهامك الدورية، وليس لديك أي مهمة دورية. أنشئ واحدة باستخدام openbot.create_routine، ثم افتح الانتظار.",
+    "لا يوقظ الانتظار الذي ليس له وقت إيقاظ إلا تشغيل إحدى مهامك الدورية، وليس لديك أي مهمة دورية. للعودة لاحقًا، استدعِ openbot.await_event مع wakeAfterMinutes. لانتظار تشغيل مهمة دورية، أنشئ واحدة أولًا باستخدام openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "حدّد wakeAfterMinutes أو wakeAt، وليس كليهما.",
+  "error.backend.agentWaitWakeAtFormat":
+    "اكتب wakeAt بصيغة وقت ISO 8601 مع منطقة زمنية، مثل 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "يجب أن يكون وقت الإيقاظ في المستقبل وألا يتجاوز 30 يومًا. يجب أن تكون قيمة wakeAfterMinutes بين 5 و43200.",
   "error.backend.agentWaitRemoteUnsupported": "الانتظارات المفتوحة متاحة فقط للوكلاء على هذا الحاسوب.",
   "error.backend.markUnreadRemoteUnsupported": "تمييز رسالة كغير مقروءة متاح فقط للوكلاء على هذا الحاسوب.",
   "error.backend.messageDeleteUnsupported": "لا يدعم هذا الخادم حذف الرسائل.",

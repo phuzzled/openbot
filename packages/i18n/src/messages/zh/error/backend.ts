@@ -180,7 +180,10 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "请用一句简短说明写清这个等待是为了什么。",
   "error.backend.agentWaitRoutineGone": "该助手没有这个 id 的自动化任务。",
   "error.backend.agentWaitNoRoutine":
-    "只有你自己的自动化任务运行才能唤醒等待，而你还没有自动化任务。请先用 openbot.create_routine 创建一个，再开启等待。",
+    "只有你自己的自动化任务运行才能唤醒没有唤醒时间的等待，而你还没有自动化任务。如需稍后再查看，请用 wakeAfterMinutes 调用 openbot.await_event。如需等待自动化任务，请先用 openbot.create_routine 创建一个。",
+  "error.backend.agentWaitWakeBoth": "请只提供 wakeAfterMinutes 或 wakeAt 其中之一。",
+  "error.backend.agentWaitWakeAtFormat": "请以带时区的 ISO 8601 时间提供 wakeAt，例如 2026-05-01T09:00:00+10:00。",
+  "error.backend.agentWaitWakeRange": "唤醒时间必须在将来，且不超过 30 天。wakeAfterMinutes 必须在 5 到 43200 之间。",
   "error.backend.agentWaitRemoteUnsupported": "未关闭的等待仅适用于本电脑上的助手。",
   "error.backend.markUnreadRemoteUnsupported": "仅本电脑上的助手可以将消息标为未读。",
   "error.backend.messageDeleteUnsupported": "此服务器不支持删除消息。",

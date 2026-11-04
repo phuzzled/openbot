@@ -24,7 +24,7 @@ export class AgentWaitError extends Error {}
 export class AgentWaitLimitError extends AgentWaitError {}
 
 export interface AgentWaitStoreOptions {
-  database: OpenBotDatabase;
+  database: Pick<OpenBotDatabase, "connection">;
   createId?: () => string;
   now?: () => Date;
 }
@@ -35,10 +35,12 @@ export interface OpenAgentWaitInput {
   requestText: string;
   note: string;
   routineId: string | null;
+  /** When the wait wakes by itself, as an ISO time. Null: only a routine run or a script event wakes it. */
+  wakeAt: string | null;
 }
 
 export class AgentWaitStore {
-  readonly #database: OpenBotDatabase;
+  readonly #database: Pick<OpenBotDatabase, "connection">;
   readonly #createId: () => string;
   readonly #now: () => Date;
 
@@ -70,8 +72,8 @@ export class AgentWaitStore {
     const waitId = this.#createId();
     const inserted = this.#database.connection
       .prepare(
-        `INSERT INTO agent_waits (wait_id, agent_id, request_delivery_id, request_text, note, routine_id, created_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO agent_waits (wait_id, agent_id, request_delivery_id, request_text, note, routine_id, created_at, wake_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?
          WHERE (SELECT COUNT(*) FROM agent_waits WHERE agent_id = ?) < ?`,
       )
       .run(
@@ -82,6 +84,7 @@ export class AgentWaitStore {
         input.note,
         input.routineId,
         this.#now().toISOString(),
+        input.wakeAt,
         input.agentId,
         INPUT_LIMITS.agentWaits,
       );
@@ -138,6 +141,40 @@ export class AgentWaitStore {
       .run(this.#now().toISOString(), deliveryId, agentId, ...waitIds);
   }
 
+  /** Sets or clears the time at which these waits wake by themselves. */
+  setWakeAt(agentId: string, waitIds: readonly string[], wakeAt: string | null): void {
+    if (waitIds.length === 0) return;
+    this.#database.connection
+      .prepare(
+        `UPDATE agent_waits SET wake_at = ?
+         WHERE agent_id = ? AND wait_id IN (${waitIds.map(() => "?").join(", ")})`,
+      )
+      .run(wakeAt, agentId, ...waitIds);
+  }
+
+  /** Every wait that has a wake time, the earliest first. */
+  timed(): AgentWait[] {
+    return databaseRows(
+      this.#database.connection
+        .prepare("SELECT * FROM agent_waits WHERE wake_at IS NOT NULL ORDER BY wake_at, created_at, wait_id")
+        .all(),
+    ).map(toWait);
+  }
+
+  /**
+   * Marks the waits that their wake time woke, and clears that time in the same statement, so a
+   * wait wakes once for each time it is given.
+   */
+  markWokenByTime(agentId: string, waitIds: readonly string[], deliveryId: string): void {
+    if (waitIds.length === 0) return;
+    this.#database.connection
+      .prepare(
+        `UPDATE agent_waits SET woken_at = ?, wake_delivery_id = ?, wake_at = NULL
+         WHERE agent_id = ? AND wait_id IN (${waitIds.map(() => "?").join(", ")})`,
+      )
+      .run(this.#now().toISOString(), deliveryId, agentId, ...waitIds);
+  }
+
   /** The open waits that this delivery woke. A wait cancelled since then is not in the list. */
   wokenBy(deliveryId: string): AgentWait[] {
     return databaseRows(
@@ -159,5 +196,6 @@ function toWait(row: DynamicRecord): AgentWait {
     createdAt: requiredStringColumn(row, "created_at"),
     wokenAt: optionalStringColumn(row, "woken_at"),
     wakeDeliveryId: optionalStringColumn(row, "wake_delivery_id"),
+    wakeAt: optionalStringColumn(row, "wake_at"),
   };
 }

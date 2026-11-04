@@ -112,6 +112,7 @@ export const messages = {
   "chat.waits.state.resuming": "正在继续请求",
   "chat.waits.state.woken": "已唤醒，未关闭",
   "chat.waits.request": "针对“{text}”",
+  "chat.waits.wakesAt": "{time} 唤醒",
   "chat.waits.actions": "更多操作：{note}",
   "chat.waits.showRequest": "查看请求",
   "chat.waits.cancel": "取消该等待",

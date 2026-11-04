@@ -140,8 +140,17 @@ set to skip at the limit drops the run instead, and its run history shows it as 
 | 415 | `Content-Type` is not `application/json`. |
 | 429 | The agent got 30 runs from local scripts in the last hour. |
 
+A wait can also wake at a time, with no routine and no script. The agent gives `wakeAfterMinutes`
+(5 to 43200) or `wakeAt` (ISO 8601 with a time zone offset, at most 30 days away) to
+`openbot.await_event`. At that time OpenBot queues one message from the agent to its own chat. Its
+input repeats the request and the note of each due wait, as a routine run does. The wake clears the
+time, so a wait wakes once for each time. A time that passed while OpenBot was closed, the computer
+slept or the agent was hidden wakes the wait once, at the next chance. In the run that a wake starts,
+`openbot.await_event` with a new time sets the next wake of the same waits. A wait with no time and
+no routine is refused. The chat shows the wake time of each open wait.
+
 An agent can have at most 20 open waits. `openbot.list_waits` shows an agent's open waits with their
-IDs, and `openbot.close_wait` closes one by ID. With `agentId`, both tools act on another local
+IDs and wake times, and `openbot.close_wait` closes one by ID. With `agentId`, both tools act on another local
 agent's waits, as the routine tools do. `openbot.list_agents` shows `openWaits` for each agent that
 has open waits.
 

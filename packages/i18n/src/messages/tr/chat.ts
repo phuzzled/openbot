@@ -112,6 +112,7 @@ export const messages = {
   "chat.waits.state.resuming": "İstek sürdürülüyor",
   "chat.waits.state.woken": "Uyandı, kapatılmadı",
   "chat.waits.request": "“{text}” için",
+  "chat.waits.wakesAt": "Uyanma {time}",
   "chat.waits.actions": "Diğer işlemler: {note}",
   "chat.waits.showRequest": "İsteği göster",
   "chat.waits.cancel": "Beklemeyi iptal et",
