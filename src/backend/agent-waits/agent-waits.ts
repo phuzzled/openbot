@@ -226,7 +226,7 @@ export class AgentWaits {
     const inheritedWakes = Math.max(0, ...replaced.map((closed) => closed.timeWakes));
     if (inheritedWakes >= TIME_WAKES_MAX)
       return openBotToolFailure(sourceText("error.backend.agentWaitWakeCap", { limit: TIME_WAKES_MAX }));
-    // A routine run wakes in the agent's own chat or the routine's thread, never in a task.
+    // A routine run wakes in the agent's own chat, never in a task.
     if (inTask && (!wakeAt || routineId)) return openBotToolFailure(sourceText("error.backend.agentWaitTaskNeedsTime"));
     if (routineId && !this.#hooks.ownsRoutine(caller.agentId, routineId))
       return openBotToolFailure(sourceText("error.backend.agentWaitRoutineGone"));
