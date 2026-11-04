@@ -105,8 +105,10 @@ one more source of the shared `RoutineTimer`, so a sleep or a held restart holds
 routines. A due wait of an agent that `RoutineScheduler.mayDrain` allows wakes in one message of the
 agent to itself in its own chat, with `expectsReply: false` (`isWaitWakeDelivery`); the chat shows it
 once, as received. `markWokenByTime` clears the time with the wake, so a wait wakes once, and a time
-missed while the app was closed fires once at the first pass. A wait that a pending run already
-continues loses its time and gets no second wake. `fork_agent_wait_timers.time_wakes`
+missed while the app was closed fires once at the first pass. A due wait whose last wake has not
+ended (the wake run gave it a new time and runs past that time) keeps its time and is skipped, and
+`nextDueAt` leaves it out, so the timer does not fire again at once. When that run ends, the next
+pass wakes it once. `fork_agent_wait_timers.time_wakes`
 counts the wakes of the time. A wait with a time, or with `time_wakes` above 0, is timed:
 `AgentWaitStore.forRoutineRun` leaves it out, unless its `routine_id` is the routine of the run.
 A wake whose delivery ends failed, interrupted or cancelled leaves the wait with no time. The next

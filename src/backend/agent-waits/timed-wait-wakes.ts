@@ -43,6 +43,7 @@ export interface TimedWaitWakesOptions {
   store: AgentWaitStore;
   mailbox: Pick<MailboxStore, "getDelivery">;
   hooks: TimedWaitWakesHooks;
+  now?: () => Date;
 }
 
 /**
@@ -50,7 +51,9 @@ export interface TimedWaitWakesOptions {
  * is one more source of the shared `RoutineTimer`, so a system sleep or a held restart holds it as
  * it holds the routines, and the next fire is one time across every owner.
  *
- * A due wait wakes once: the wake clears its time. A time that passed while the app was closed or
+ * A due wait wakes once: the wake clears its time. A wait that its wake turn gave a new time keeps
+ * that time while the turn runs, also when the time comes before the turn ends: it wakes once after
+ * that turn. A time that passed while the app was closed or
  * the computer slept is due at the next pass, so the wait wakes once then, not once for each time it
  * missed. All the due waits of one agent and lane wake in one delivery, whose input repeats each
  * request and note (`wokenWaitsPromptText`). The lane is the agent's own chat, or the open task whose
@@ -69,17 +72,34 @@ export class TimedWaitWakes implements RoutineDueSource {
   readonly #store: AgentWaitStore;
   readonly #mailbox: Pick<MailboxStore, "getDelivery">;
   readonly #hooks: TimedWaitWakesHooks;
+  readonly #now: () => Date;
 
   constructor(options: TimedWaitWakesOptions) {
     this.#store = options.store;
     this.#mailbox = options.mailbox;
     this.#hooks = options.hooks;
+    this.#now = options.now ?? (() => new Date());
   }
 
   nextDueAt(): string | null {
     // A wake that did not complete gets its new time at the next pass, which is now.
-    if (this.#unfinishedWakes().length > 0) return new Date().toISOString();
-    return this.#store.timed().find((wait) => this.#hooks.mayWake(wait.agentId))?.wakeAt ?? null;
+    const now = this.#now().toISOString();
+    if (this.#unfinishedWakes().length > 0) return now;
+    // A due wait whose wake still runs waits for the end of that wake (`waitWakeEnded` arms the timer):
+    // its time would fire the timer again at once.
+    return (
+      this.#store
+        .timed()
+        .find(
+          (wait) =>
+            this.#hooks.mayWake(wait.agentId) && !(wait.wakeAt != null && wait.wakeAt <= now && this.#wakeRuns(wait)),
+        )?.wakeAt ?? null
+    );
+  }
+
+  /** Whether the last wake of this wait has not ended yet. */
+  #wakeRuns(wait: AgentWait): boolean {
+    return wait.wakeDeliveryId !== null && this.#isPending(wait.wakeDeliveryId);
   }
 
   /** The spent waits whose last wake did not complete, of agents that can take a wake, under the limit. */
@@ -105,28 +125,19 @@ export class TimedWaitWakes implements RoutineDueSource {
     const dueByLane = new Map<string, { agentId: string; taskId: string | null; due: AgentWait[] }>();
     for (const wait of this.#store.timed()) {
       if (!wait.wakeAt || wait.wakeAt > nowText || !this.#hooks.mayWake(wait.agentId)) continue;
+      // The wake turn that set this time still runs. The wait keeps its time and wakes after that turn
+      // ends: the time is not spent.
+      if (this.#wakeRuns(wait)) continue;
       const taskId = this.#hooks.taskFor(wait);
       const key = `${wait.agentId}\u0000${taskId ?? ""}`;
       const lane = dueByLane.get(key) ?? { agentId: wait.agentId, taskId, due: [] };
       lane.due.push(wait);
       dueByLane.set(key, lane);
     }
-    for (const { agentId, taskId, due } of dueByLane.values()) {
+    for (const { agentId, taskId, due: waking } of dueByLane.values()) {
       if (!active()) break;
-      // A run that woke the wait and has not ended continues it already. The time is spent.
-      const pending = due.filter((wait) => wait.wakeDeliveryId !== null && this.#isPending(wait.wakeDeliveryId));
-      const waking = due.filter((wait) => !pending.includes(wait));
-      if (pending.length > 0)
-        this.#store.setWakeAt(
-          agentId,
-          pending.map((wait) => wait.id),
-          null,
-        );
       const first = waking[0];
-      if (!first) {
-        this.#hooks.changed(agentId);
-        continue;
-      }
+      if (!first) continue;
       const wakingIds = waking.map((wait) => wait.id);
       yield* this.#hooks
         .enqueueWake(
