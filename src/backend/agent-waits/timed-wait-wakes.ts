@@ -11,11 +11,18 @@ export interface TimedWaitWakesHooks {
    */
   mayWake(agentId: string): boolean;
   /**
-   * Queues the wake in the agent's own chat and returns its delivery id. The same key gives the same
-   * delivery, so a pass that stopped before it marked the waits does not queue a second wake.
+   * The task in which the wake of this wait runs: the open task whose thread opened it. Null: the
+   * agent's own chat.
+   */
+  taskFor(wait: AgentWait): string | null;
+  /**
+   * Queues the wake in the agent's own chat, or in the task `taskId`, and returns its delivery id. The
+   * same key gives the same delivery, so a pass that stopped before it marked the waits does not queue
+   * a second wake.
    */
   enqueueWake(
     agentId: string,
+    taskId: string | null,
     text: string,
     idempotencyKey: string,
   ): Effect.Effect<string, { readonly cause: unknown }>;
@@ -40,8 +47,9 @@ export interface TimedWaitWakesOptions {
  *
  * A due wait wakes once: the wake clears its time. A time that passed while the app was closed or
  * the computer slept is due at the next pass, so the wait wakes once then, not once for each time it
- * missed. All the due waits of one agent wake in one delivery to its own chat, whose input repeats
- * each request and note (`wokenWaitsPromptText`).
+ * missed. All the due waits of one agent and lane wake in one delivery, whose input repeats each
+ * request and note (`wokenWaitsPromptText`). The lane is the agent's own chat, or the open task whose
+ * thread opened the wait.
  *
  * It never imports the agent service facade.
  */
@@ -66,12 +74,16 @@ export class TimedWaitWakes implements RoutineDueSource {
     active: () => boolean,
   ) {
     const nowText = now.toISOString();
-    const dueByAgent = new Map<string, AgentWait[]>();
+    const dueByLane = new Map<string, { agentId: string; taskId: string | null; due: AgentWait[] }>();
     for (const wait of this.#store.timed()) {
       if (!wait.wakeAt || wait.wakeAt > nowText || !this.#hooks.mayWake(wait.agentId)) continue;
-      dueByAgent.set(wait.agentId, [...(dueByAgent.get(wait.agentId) ?? []), wait]);
+      const taskId = this.#hooks.taskFor(wait);
+      const key = `${wait.agentId}\u0000${taskId ?? ""}`;
+      const lane = dueByLane.get(key) ?? { agentId: wait.agentId, taskId, due: [] };
+      lane.due.push(wait);
+      dueByLane.set(key, lane);
     }
-    for (const [agentId, due] of dueByAgent) {
+    for (const { agentId, taskId, due } of dueByLane.values()) {
       if (!active()) break;
       // A run that woke the wait and has not ended continues it already. The time is spent.
       const pending = due.filter((wait) => wait.wakeDeliveryId !== null && this.#isPending(wait.wakeDeliveryId));
@@ -89,7 +101,12 @@ export class TimedWaitWakes implements RoutineDueSource {
       }
       const wakingIds = waking.map((wait) => wait.id);
       yield* this.#hooks
-        .enqueueWake(agentId, waking.map((wait) => wait.note).join("\n\n"), `wait-wake:${first.id}:${first.wakeAt}`)
+        .enqueueWake(
+          agentId,
+          taskId,
+          waking.map((wait) => wait.note).join("\n\n"),
+          `wait-wake:${first.id}:${first.wakeAt}`,
+        )
         .pipe(
           Effect.map((deliveryId) => this.#store.markWokenByTime(agentId, wakingIds, deliveryId)),
           Effect.catch((failure) =>

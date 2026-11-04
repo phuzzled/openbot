@@ -1103,11 +1103,11 @@ export class OpenBotToolRouter {
     // tools of the chat: they wait for events and start tasks.
     const callerThreadId = this.#conversation.publicThreadId(senderAgentId, params.threadId);
     const callerTaskId = this.#tasks.taskForThread(callerThreadId);
+    const routineThread = callerTaskId !== null && this.#tasks.isRoutineThread(callerTaskId);
     const caller = {
       agentId: senderAgentId,
-      inExecutionThread:
-        this.#conversation.isExecutionThread(callerThreadId) &&
-        !(callerTaskId !== null && this.#tasks.isRoutineThread(callerTaskId)),
+      inExecutionThread: this.#conversation.isExecutionThread(callerThreadId) && !routineThread,
+      inTaskThread: callerTaskId !== null && !routineThread,
     };
     const waitResult = this.#waits.handleTool(params, caller);
     if (waitResult) return waitResult;

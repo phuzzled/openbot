@@ -73,18 +73,21 @@ function harness(options: { hasRoutine?: boolean } = {}) {
       requireKnownAgent: () => {},
     },
   });
-  const enqueued: Array<{ agentId: string; text: string; key: string }> = [];
+  const enqueued: Array<{ agentId: string; text: string; key: string; taskId?: string }> = [];
   let hidden = false;
+  /** The task of each wait, by its note: the lane that `TimedWaitWakes` wakes it in. */
+  const taskOfNote = new Map<string, string>();
   const wakes = () =>
     new TimedWaitWakes({
       store,
       mailbox,
       hooks: {
         mayWake: () => !hidden,
-        enqueueWake: (agentId, text, key) =>
+        taskFor: (wait) => taskOfNote.get(wait.note) ?? null,
+        enqueueWake: (agentId, taskId, text, key) =>
           Effect.sync(() => {
             const id = `wake-${enqueued.length + 1}`;
-            enqueued.push({ agentId, text, key });
+            enqueued.push({ agentId, text, key, ...(taskId ? { taskId } : {}) });
             deliveries.set(
               id,
               delivery(id, { sender: { kind: "agent", agentId }, text, expectsReply: false, status: "queued" }),
@@ -95,7 +98,11 @@ function harness(options: { hasRoutine?: boolean } = {}) {
         emitError: () => {},
       },
     });
-  const call = (args: unknown, turnId = "turn-1") =>
+  const call = (
+    args: unknown,
+    turnId = "turn-1",
+    caller: { inExecutionThread: boolean; inTaskThread?: boolean } = { inExecutionThread: false },
+  ) =>
     body(
       waits.handleTool(
         {
@@ -106,7 +113,7 @@ function harness(options: { hasRoutine?: boolean } = {}) {
           tool: AWAIT_EVENT_TOOL,
           arguments: args,
         },
-        { agentId: AGENT, inExecutionThread: false },
+        { agentId: AGENT, ...caller },
       ),
     );
   return {
@@ -116,6 +123,7 @@ function harness(options: { hasRoutine?: boolean } = {}) {
     wakes,
     call,
     enqueued,
+    taskOfNote,
     turns,
     deliveries,
     armed: () => armed,
@@ -291,6 +299,48 @@ describe("timed wait wakes", () => {
     expect(turnLeavesWaitOpen(test.store.list(AGENT), ["user-2"])).toBe(false);
     test.store.delete(AGENT, test.store.list(AGENT)[0]?.id ?? "");
     expect(turnLeavesWaitOpen(test.store.list(AGENT), ["wake-1"])).toBe(false);
+  });
+});
+
+describe("waits in side threads", () => {
+  const TASK = { inExecutionThread: true, inTaskThread: true };
+
+  it("opens a timed wait in a task thread, and refuses one with no time or with a routine", () => {
+    const test = harness({ hasRoutine: true });
+    const refused = test.call({ note: "Check the build" }, "turn-1", TASK);
+    expect(refused.success).toBe(false);
+    expect(String(refused.value.error)).toContain("wakeAfterMinutes");
+    expect(
+      test.call({ note: "Check the build", wakeAfterMinutes: 60, routineId: "inbox" }, "turn-1", TASK).success,
+    ).toBe(false);
+    const opened = test.call({ note: "Check the build", wakeAfterMinutes: 60 }, "turn-1", TASK);
+    expect(opened.success).toBe(true);
+    expect(String(opened.value.wakes)).toContain("in this task");
+    expect(test.store.list(AGENT)).toHaveLength(1);
+  });
+
+  it("refuses a wait in a channel or messaging thread, and says where a wait works", () => {
+    const test = harness();
+    const refused = test.call({ note: "Check the build", wakeAfterMinutes: 60 }, "turn-1", { inExecutionThread: true });
+    expect(refused.success).toBe(false);
+    expect(String(refused.value.error)).toContain("task thread");
+    expect(test.store.list(AGENT)).toEqual([]);
+  });
+
+  it("wakes the waits of a task in that task, apart from the waits of the agent's own chat", async () => {
+    const test = harness();
+    test.call({ note: "Check the build", wakeAfterMinutes: 30 }, "turn-1", TASK);
+    test.call({ note: "Check the deploy", wakeAfterMinutes: 30 });
+    test.taskOfNote.set("Check the build", "task-1");
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    test.setNow(due);
+    await Effect.runPromise(test.wakes().processDue(due, () => true));
+    expect(
+      test.enqueued.map(({ text, taskId }) => ({ text, taskId })).sort((a, b) => a.text.localeCompare(b.text)),
+    ).toEqual([
+      { text: "Check the build", taskId: "task-1" },
+      { text: "Check the deploy", taskId: undefined },
+    ]);
   });
 });
 

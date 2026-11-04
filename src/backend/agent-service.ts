@@ -688,7 +688,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // As for routines: a hidden agent, or one that is copied or deleted, starts no new work.
         mayWake: (agentId) =>
           this.#store.list().some((agent) => agent.id === agentId) && this.#routines.mayDrain(agentId),
-        enqueueWake: (agentId, text, idempotencyKey) => this.#enqueueWaitWake(agentId, text, idempotencyKey),
+        // The task whose thread opened the wait, while it is open. A routine thread wakes in the chat,
+        // as before: its lane takes routine runs.
+        taskFor: (wait) => {
+          const taskId = mailbox.taskIdForDelivery(wait.requestMessageId);
+          return taskId !== null && this.#tasks.threadId(taskId) !== null && !this.#tasks.isRoutineThread(taskId)
+            ? taskId
+            : null;
+        },
+        enqueueWake: (agentId, taskId, text, idempotencyKey) =>
+          this.#enqueueWaitWake(agentId, taskId, text, idempotencyKey),
         changed: (agentId) => this.#emit({ type: "waits-changed", snapshot: this.#waits.list(agentId) }),
         emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       },
@@ -2758,13 +2767,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   /** Refuses new work for a hidden agent. A turn that already runs is not affected. */
   /**
-   * The wake of timed waits: a message of the agent to its own chat, with no answer expected. Its input
+   * The wake of timed waits: a message of the agent to itself, with no answer expected. Its input
    * repeats the requests of the waits (`deliveryPromptInput`). It runs in the agent's chat, as a routine
-   * run with no side thread does.
+   * run with no side thread does, or in the task (`taskId`) whose thread opened the waits.
    */
   readonly #enqueueWaitWake = Effect.fn("AgentService.enqueueWaitWake")(function* (
     this: AgentService,
     agentId: string,
+    taskId: string | null,
     text: string,
     idempotencyKey: string,
   ) {
@@ -2778,6 +2788,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         text,
         replyToMessageId: null,
         expectsReply: false,
+        ...(taskId ? { taskId } : {}),
         idempotencyKey,
       })
       .pipe(Effect.mapError((failure) => ({ cause: failure.cause })));
@@ -2785,9 +2796,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!deliveryId) return yield* Effect.fail({ cause: new Error("Unable to create the wait wake delivery.") });
     yield* Effect.try({
       try: () => {
-        const snapshot = this.#conversation.ensureSnapshot(agentId, agent.threadId);
-        this.#mailboxSync.syncMailboxMessages(snapshot);
-        this.#conversation.emitConversation(snapshot);
+        // A task shows its queue in its own panel, as the brief of `start_task` does.
+        if (!taskId) {
+          const snapshot = this.#conversation.ensureSnapshot(agentId, agent.threadId);
+          this.#mailboxSync.syncMailboxMessages(snapshot);
+          this.#conversation.emitConversation(snapshot);
+        }
         this.#mailboxSync.emitQueue(agentId);
         this.#drain.scheduleDrain(agentId);
       },

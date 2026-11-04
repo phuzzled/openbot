@@ -157,6 +157,12 @@ with no time and no `routineId` wakes on every routine run of its agent, as befo
 wait wakes it at most 20 times. After that, a new time is refused, and the agent tells the user what
 it found and closes the wait.
 
+An agent can also open a timed wait in a task thread. The wake then runs in that task, while the task
+is open, and in the agent's own chat after the task closes. A wait in a task thread must have a time
+and no `routineId`, because routine runs do not run in a task. A channel or messaging conversation
+cannot open a wait: its wake would run outside that conversation, and the reply would not reach the
+people in it.
+
 An agent can have at most 20 open waits. `openbot.list_waits` shows an agent's open waits with their
 IDs and wake times, and `openbot.close_wait` closes one by ID. With `agentId`, both tools act on another local
 agent's waits, as the routine tools do. `openbot.list_agents` shows `openWaits` for each agent that

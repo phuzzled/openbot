@@ -195,7 +195,9 @@ export const messages = {
   "error.backend.agentWaitGone": "To oczekiwanie nie jest otwarte. Agent je zamknął albo ktoś je anulował.",
   "error.backend.agentWaitNoRequest": "Oczekiwanie potrzebuje wiadomości, aby kontynuować. Ta tura nie ma wiadomości.",
   "error.backend.agentWaitOwnChatOnly":
-    "Otwieraj oczekiwanie tylko we własnym czacie. Zadanie kanału lub komunikatora nie może czekać.",
+    "Otwieraj oczekiwanie we własnym czacie lub w wątku zadania. Rozmowa w kanale lub komunikatorze nie może czekać: jej wybudzenie działałoby poza tą rozmową. Nie obiecuj tu, że sprawdzisz później; poproś użytkownika, aby zapytał ponownie później albo poprosił cię o to we własnym czacie.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "W wątku zadania oczekiwanie wybudza się tylko o określonej porze, w tym zadaniu. Podaj wakeAfterMinutes lub wakeAt, bez routineId.",
   "error.backend.agentWaitNoteRequired": "Podaj krótką notatkę, na co jest to oczekiwanie.",
   "error.backend.agentWaitRoutineGone": "Ten agent nie ma rutyny o tym identyfikatorze.",
   "error.backend.agentWaitNoRoutine":

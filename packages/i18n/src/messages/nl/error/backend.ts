@@ -201,7 +201,9 @@ export const messages = {
   "error.backend.agentWaitNoRequest":
     "Een wachtpunt heeft een bericht nodig om verder te gaan. Deze beurt heeft geen bericht.",
   "error.backend.agentWaitOwnChatOnly":
-    "Open een wachtpunt alleen in je eigen chat. Een kanaal- of berichtentaak kan niet wachten.",
+    "Open een wachtpunt in je eigen chat of in een taakthread. Een kanaal- of berichtengesprek kan niet wachten: het wekken zou buiten dat gesprek lopen. Beloof hier niet om later te kijken; vraag de gebruiker om het later opnieuw te vragen, of om het je in je eigen chat te vragen.",
+  "error.backend.agentWaitTaskNeedsTime":
+    "In een taakthread wordt een wachtpunt alleen op een tijd gewekt, in deze taak. Geef wakeAfterMinutes of wakeAt op, en geen routineId.",
   "error.backend.agentWaitNoteRequired": "Geef een korte notitie die zegt waarvoor het wachtpunt is.",
   "error.backend.agentWaitRoutineGone": "Deze agent heeft geen routine met deze id.",
   "error.backend.agentWaitNoRoutine":
