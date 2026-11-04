@@ -941,6 +941,10 @@ try {
       "The session stays open for the continuation and closes once after it.",
     );
     assert.ok(turns[1]?.text.includes("[pending] Write"), "The note names the open step.");
+    assert.ok(
+      turns[1]?.text.includes("only the answer of its last turn"),
+      "The note says that only the last answer is the result of the run.",
+    );
     const runs = current.service.listRoutineRuns({ agentId: agent.id, routineId: routine.id });
     assert.equal(runs.length, 1, "One run.");
     assert.equal(runs[0]?.status, "succeeded", "The run succeeds.");

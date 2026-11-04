@@ -23,6 +23,7 @@ import {
   combinedPromptInput,
   deliveryPromptInput,
   deliveryWakesWaits,
+  ROUTINE_CONTINUATION_RESULT_NOTE,
 } from "./delivery-content";
 import type { DuplicationGate } from "./duplication-gate";
 import type { MailboxSync } from "./mailbox-sync";
@@ -584,7 +585,12 @@ export class DrainScheduler {
       }
       // One message from the user lets one turn try a limit, so the other lanes stay held.
       this.#usageLimits.tryStarted(agentId);
-      yield* this.startDelivery(context, planNote ?? undefined);
+      // A routine run in its own session gives only its last answer to the chat.
+      const note =
+        planNote !== null && this.#runsInOwnSession(context)
+          ? `${planNote}\n${ROUTINE_CONTINUATION_RESULT_NOTE}`
+          : planNote;
+      yield* this.startDelivery(context, note ?? undefined);
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
