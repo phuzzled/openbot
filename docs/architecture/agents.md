@@ -128,23 +128,34 @@ open and nothing that brings it back. At the end of each turn, `TurnLifecycle` c
 `turnSettled` hook once, after the deliveries settle. `detectStall` finds a stall when the turn
 completed, no plan continuation is queued, it ran in the own chat or a task (not a channel or
 messaging thread, a routine run or a quiet run) for a message of the user or of the agent itself,
-no open wait serves its deliveries or its lane, no question, approval or takeover waits, the answer
-does not wait for the user (`waitsForUser`), and the answer's final part promises a follow-up
-(`followUpPromise`: "I'll let you know when they reply", "Once they reply, I'll compare them") or the
-plan of the turn has open steps. Then `StallCheckStore` keeps one check for the lane in the fork table
-`fork_stall_checks`, due 15 minutes later. A newer turn of the lane that is not a stall ends the check;
-a plan continuation of the same request holds it. `StallSweep` is one more source of the shared
-`RoutineTimer`. At the due time, a busy lane, an open wait in the lane, a closed task or a user message
-since the check cancels it. A hidden agent keeps its check until it shows (`mayWake`), and with no ready
-provider the check waits 15 minutes. Otherwise one nudge goes to the lane, as the wake of timed waits
-does (`#enqueueWaitWake`, key `stall-nudge:<checkId>:<n>`). Its text starts with `STALL_NUDGE_HEADER`
-(`isStallNudgeDelivery`), so `deliveryPromptInput` sends it as is: the reason, the four ways to end the
-stall, and the request. A nudge turn that stalls again keeps the request and its count, and the next
-check is 60 minutes later. After 2 nudges of one request, or 12 nudges of one agent in 24 hours
-(`fork_stall_nudges`), a lane that stalls again gets one `stall-alert` line for the user, which counts
-as unread, and no more nudges. A Stop, a wait or a finished answer in the nudge turn ends the check. A
-nudge delivery that ends with no turn end (a restart, a Stop of a turn that no provider ran) ends its
-check. `OPENBOT_STALL_SWEEP=0` turns the sweep off.
+no open wait serves its deliveries (`turnLeavesWaitOpen`), no question, approval or takeover waits,
+the answer does not wait for the user (`waitsForUser`), and the answer's final part promises a
+follow-up (`followUpPromise`: "I'll let you know when they reply", "Once they reply, I'll compare
+them", "I'll check on it in 10 minutes", "Tomorrow I'll compare the quotes") or the plan of the turn
+has open steps. `followUpPromise` reads only the agent's own prose: fenced code, quoted lines, inline
+code, text in double quotes and a drafted message (from "Here is a draft", "Subject:" or a greeting
+to its sign-off) go first. A sentence that waits on an act of the user ("When you are ready, I'll
+start the migration", "Let me know and I'll send it"), a question, an offer, a negation and the past
+tense do not count. Then `StallCheckStore` keeps one check for the lane in the fork table
+`fork_stall_checks`, due 15 minutes later, with the request cut to 2,000 characters. A newer turn of
+the lane that is not a stall ends the check; a plan continuation of the same request holds it. A turn
+for a teammate's message, or with no delivery, keeps the check of another request. `StallSweep` is
+one more source of the shared `RoutineTimer`. At the due time, a check older than 24 hours
+(`STALL_MAX_AGE_MS`) ends with no nudge. A busy lane, a closed task, a user message since the check,
+or a wait that backs it (`waitBacksStallCheck`: a wait of the lane that serves the check's request or
+nudge, or that opened at or after the check) cancels it. An older wait of other work, as one that a
+Stop left with no time, does not. A hidden agent keeps its check until it shows (`mayWake`), and with
+no ready provider the check waits 15 minutes. Otherwise one nudge goes to the lane, as the wake of
+timed waits does (`#enqueueWaitWake`, key `stall-nudge:<checkId>:<n>`). Its text starts with
+`STALL_NUDGE_HEADER` (`isStallNudgeDelivery`), so `deliveryPromptInput` sends it as is: the reason,
+then first the instruction to say so in one line and stop if the agent waits for the user, and never
+to do an action that the user did not approve, then the ways to end the stall, and the request. A
+nudge turn that stalls again keeps the request and its count, and the next check is 60 minutes later.
+After 2 nudges of one request, or 12 nudges of one agent in 24 hours (`fork_stall_nudges`), a lane
+that stalls again gets one `stall-alert` line for the user, which counts as unread, and no more
+nudges. A Stop, a wait or a finished answer in the nudge turn ends the check. A nudge delivery that
+ends with no turn end (a restart, a Stop of a turn that no provider ran) ends its check.
+`OPENBOT_STALL_SWEEP=0` turns the sweep off.
 
 A routine run in an agent's own chat (no task, channel or messaging delivery) does not resume the
 chat's provider session. `DrainScheduler.startDelivery` starts a new session for it with
