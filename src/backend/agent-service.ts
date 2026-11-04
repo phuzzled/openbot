@@ -22,6 +22,7 @@ import type {
   AgentTaskInput,
   AgentTaskReadState,
   AgentTasksSnapshot,
+  AgentWait,
   AgentWaitsSnapshot,
   AskSideQuestionInput,
   AttachmentDataInput,
@@ -252,6 +253,8 @@ import { RoutineRecords } from "./routine-records";
 import type { RoutineHoldWindow } from "./routine-store";
 import { type RoutineDueSource, RoutineTimer } from "./routine-timer";
 import type { SidebarLayoutStore } from "./sidebar-layout-store";
+import { StallCheckStore } from "./stall-sweep/stall-check-store";
+import { STALL_ALERT_ITEM_TYPE, StallSweep } from "./stall-sweep/stall-sweep";
 import type { VaultItems } from "./vault-items";
 import type { WorkflowRunEnd } from "./workflows/workflows";
 import {
@@ -449,6 +452,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #memoryReview: MemoryReview;
   readonly #waits: AgentWaits;
   readonly #timedWaits: TimedWaitWakes;
+  /** Fork: nudges an agent whose turn left work open with nothing to bring it back. */
+  readonly #stallSweep: StallSweep;
   readonly #tasks: AgentTasks;
   readonly #tables: AgentTables | null;
   readonly #routines: RoutineScheduler;
@@ -653,7 +658,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // One timer for every routine owner. The sources are read lazily because `channels` and its
     // scheduler are built further down, and because an owner's earliest routine changes constantly.
     this.#routineTimer = new RoutineTimer(
-      () => [this.#routines, this.#channelRoutines, this.#timedWaits, ...(options.extraRoutineSources?.() ?? [])],
+      () => [
+        this.#routines,
+        this.#channelRoutines,
+        this.#timedWaits,
+        this.#stallSweep,
+        ...(options.extraRoutineSources?.() ?? []),
+      ],
       () => this.#initialized && !this.#stopping,
       (code, error) => this.#emitError(code, error),
     );
@@ -675,14 +686,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       store: waitStore,
       mailbox,
       hooks: {
-        // As for routines: a hidden agent, or one that is copied or deleted, starts no new work.
-        mayWake: (agentId) =>
-          this.#store.list().some((agent) => agent.id === agentId) && this.#routines.mayDrain(agentId),
-        // The task whose thread opened the wait, while it is open.
-        taskFor: (wait) => {
-          const taskId = mailbox.taskIdForDelivery(wait.requestMessageId);
-          return taskId !== null && this.#tasks.threadId(taskId) !== null ? taskId : null;
-        },
+        mayWake: (agentId) => this.#mayWake(agentId),
+        taskFor: (wait) => this.#waitLane(wait),
         enqueueWake: (agentId, taskId, text, idempotencyKey) =>
           this.#enqueueWaitWake(agentId, taskId, text, idempotencyKey),
         wakeQueued: (agentId) => {
@@ -690,6 +695,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#drain.scheduleDrain(agentId);
         },
         changed: (agentId) => this.#emit({ type: "waits-changed", snapshot: this.#waits.list(agentId) }),
+        emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
+      },
+    });
+    this.#stallSweep = new StallSweep({
+      store: new StallCheckStore({ database: store.database }),
+      hooks: {
+        mayWake: (agentId) => this.#mayWake(agentId),
+        providerReady: (agentId) => {
+          const agent = this.#store.list().find((item) => item.id === agentId);
+          return this.#providers.isReady() && agent !== undefined && !this.#providers.signInRequired(agent.provider);
+        },
+        laneOpen: (_agentId, taskId) => taskId === null || this.#tasks.threadId(taskId) !== null,
+        laneBusy: (agentId, taskId) =>
+          mailbox.laneActive(agentId, taskId) || mailbox.laneQueuedIds(agentId, taskId).length > 0,
+        laneHasOpenWait: (agentId, taskId) => this.#laneHasOpenWait(agentId, taskId),
+        userMessagedSince: (agentId, since) =>
+          mailbox
+            .listQueue(agentId)
+            .deliveries.some((delivery) => delivery.sender.kind === "user" && delivery.createdAt > since),
+        deliveryStatus: (deliveryId) => mailbox.getDelivery(deliveryId)?.delivery.status,
+        enqueueNudge: (agentId, taskId, text, idempotencyKey) =>
+          this.#enqueueWaitWake(agentId, taskId, text, idempotencyKey),
+        nudgeQueued: (agentId) => {
+          this.#mailboxSync.emitQueue(agentId);
+          this.#drain.scheduleDrain(agentId);
+        },
+        alert: (agentId, taskId) => this.#appendStallAlert(agentId, taskId),
+        changed: () => this.#routineTimer.arm(),
         emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       },
     });
@@ -1510,6 +1543,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         hasOpenWait: (agentId, deliveryIds) => turnLeavesWaitOpen(this.#waits.list(agentId).waits, deliveryIds),
         waitWakeEnded: () => this.#routineTimer.arm(),
         waitWakeStopped: (agentId, deliveryIds) => this.#timedWaits.wakeStopped(agentId, deliveryIds),
+        turnSettled: (turn) => {
+          try {
+            const deliveryIds = turn.deliveries.map((delivery) => delivery.id);
+            this.#stallSweep.turnEnded({
+              ...turn,
+              stopped:
+                this.#stoppedTurn(turn.agentId, turn.taskId) === turn.turnId ||
+                (turn.taskId === null && this.#requestedNewChats.has(turn.agentId)),
+              waitOpen:
+                turnLeavesWaitOpen(this.#waits.list(turn.agentId).waits, deliveryIds) ||
+                this.#laneHasOpenWait(turn.agentId, turn.taskId),
+              waitsForAttention: this.#attention.hasAttentionFor(turn.agentId),
+              openSteps: (turn.plan?.steps ?? [])
+                .filter((step) => step.status !== "completed")
+                .map((step) => step.text),
+            });
+          } catch (error) {
+            this.#emitError("stall_check_failed", error, turn.agentId);
+          }
+        },
         routineAnswered: (agentId, deliveryId, answer) => {
           const agent = this.#store.list().find((item) => item.id === agentId);
           const run = this.#routines.runForDelivery(deliveryId);
@@ -2732,6 +2785,48 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }).bind(this);
 
   /** Refuses new work for a hidden agent. A turn that already runs is not affected. */
+  /** As for routines: a hidden agent, or one that is copied or deleted, starts no new work. */
+  #mayWake(agentId: string): boolean {
+    return this.#store.list().some((agent) => agent.id === agentId) && this.#routines.mayDrain(agentId);
+  }
+
+  /**
+   * The lane in which a wait wakes: the task whose thread opened it, while it is open. Null: the
+   * agent's own chat.
+   */
+  #waitLane(wait: AgentWait): string | null {
+    const taskId = this.#mailbox.taskIdForDelivery(wait.requestMessageId);
+    return taskId !== null && this.#tasks.threadId(taskId) !== null ? taskId : null;
+  }
+
+  /** Whether an open wait of the agent wakes in this lane. */
+  #laneHasOpenWait(agentId: string, taskId: string | null): boolean {
+    return this.#waits.list(agentId).waits.some((wait) => this.#waitLane(wait) === taskId);
+  }
+
+  /**
+   * Fork: the line that tells the user that a lane stopped with work open, after the stall nudges did
+   * not help (`StallSweep`). It shows in the agent's own chat or in the task, and counts as unread.
+   */
+  #appendStallAlert(agentId: string, taskId: string | null): void {
+    const message: ConversationMessage = {
+      id: `stall-alert-${randomUUID()}`,
+      author: "system",
+      source: "system",
+      text: sourceText("status.agent.stallAlert"),
+      createdAt: new Date().toISOString(),
+      status: "completed",
+      itemType: STALL_ALERT_ITEM_TYPE,
+    };
+    try {
+      const threadId = taskId === null ? null : this.#tasks.threadId(taskId);
+      if (taskId === null) this.#appendSystemMessage(agentId, message, "thread.stall-alert");
+      else if (threadId) this.#appendSideThreadSystemMessage(agentId, threadId, message, "thread.stall-alert");
+    } catch (error) {
+      this.#emitError("stall_alert_failed", error, agentId);
+    }
+  }
+
   /**
    * The wake of timed waits: a message of the agent to itself, with no answer expected. Its input
    * repeats the requests of the waits (`deliveryPromptInput`). It runs in the agent's chat, as a routine

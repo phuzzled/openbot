@@ -85,5 +85,7 @@ export const messages = {
   "status.agent.vaultField.email": "邮箱地址",
   "status.agent.nextStepContinues": "助手在下一步之前停下了。继续工作（{current}/{limit}）。",
   "status.agent.planContinues": "计划还有未完成的步骤。助手继续工作（{current}/{limit}）。",
+  "status.agent.stallAlert":
+    "该助手在工作未完成时停了下来，提醒也没有帮助。对于这个请求，OpenBot 不会再提醒它。请阅读它的最后一条回答，并告诉它下一步做什么。",
   "status.agent.branchTitle": "分支聊天",
 } as const satisfies PartialTranslation<typeof source>;

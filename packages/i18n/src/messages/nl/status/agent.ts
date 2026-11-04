@@ -94,5 +94,7 @@ export const messages = {
   "status.agent.vaultField.email": "E-mailadres",
   "status.agent.nextStepContinues": "De agent stopte vóór de volgende stap en gaat verder ({current} van {limit}).",
   "status.agent.planContinues": "Het plan heeft open stappen. De agent gaat verder ({current} van {limit}).",
+  "status.agent.stallAlert":
+    "Deze agent is gestopt terwijl er nog werk openstaat, en herinneringen hielpen niet. OpenBot herinnert hem voor dit verzoek niet meer. Lees zijn laatste antwoord en zeg wat hij nu moet doen.",
   "status.agent.branchTitle": "Afgetakte chat",
 } as const satisfies PartialTranslation<typeof source>;

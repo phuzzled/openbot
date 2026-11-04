@@ -63,5 +63,7 @@ export const messages = {
   "status.agent.nextStepContinues":
     "L'agente si è fermato prima del passaggio successivo. Continua ({current} di {limit}).",
   "status.agent.planContinues": "Il piano ha passaggi aperti. L'agente continua ({current} di {limit}).",
+  "status.agent.stallAlert":
+    "Questo agente si è fermato con del lavoro ancora aperto e i promemoria non sono serviti. OpenBot non glielo ricorderà più per questa richiesta. Leggi la sua ultima risposta e digli cosa fare dopo.",
   "status.agent.branchTitle": "Chat ramificata",
 } as const satisfies PartialTranslation<typeof source>;

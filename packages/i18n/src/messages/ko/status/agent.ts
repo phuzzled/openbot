@@ -65,5 +65,7 @@ export const messages = {
   "status.agent.mcpSignInRequested": "MCP 서버 {name}에 로그인이 필요해요. 서버 설정의 MCP에서 로그인해 주세요.",
   "status.agent.nextStepContinues": "에이전트가 다음 단계 전에 멈췄어요. 계속해요 ({current}/{limit}).",
   "status.agent.planContinues": "계획에 남은 단계가 있어요. 에이전트가 계속해요 ({current}/{limit}).",
+  "status.agent.stallAlert":
+    "이 에이전트가 작업을 남긴 채 멈췄고, 알림도 도움이 되지 않았어요. 이 요청에 대해 OpenBot은 더 이상 알리지 않아요. 마지막 답변을 읽고 다음에 할 일을 알려 주세요.",
   "status.agent.branchTitle": "분기된 채팅",
 } as const satisfies PartialTranslation<typeof source>;
