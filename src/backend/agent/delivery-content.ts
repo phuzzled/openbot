@@ -187,24 +187,35 @@ export function isWaitWakeDelivery(
 
 /** The first line of a stall nudge (`StallSweep`). It tells a nudge from the wake of timed waits. */
 export const STALL_NUDGE_HEADER = "OpenBot check: your last turn ended with work still open.";
+/** The most characters of the request that a stall check keeps and its nudge repeats. */
+export const STALL_NUDGE_REQUEST_MAX = 2000;
+
+/** The request text of a stall check, cut to `STALL_NUDGE_REQUEST_MAX` characters. */
+export function cutStallRequest(text: string): string {
+  return text.length > STALL_NUDGE_REQUEST_MAX ? `${text.slice(0, STALL_NUDGE_REQUEST_MAX)}…(cut)` : text;
+}
 
 /**
  * The text of a stall nudge: the reason, what to do, and the request, so a compacted context still
- * knows it. `nudge` and `limit` count the nudges of the request.
+ * knows it. Its first instruction stops an agent that waits for the user, so a nudge never pushes an
+ * unapproved action. `nudge` and `limit` count the nudges of the request. A long request is cut.
  */
 export function stallNudgeText(input: { reason: string; requestText: string; nudge: number; limit: number }): string {
+  const requestText = cutStallRequest(input.requestText);
   return [
     STALL_NUDGE_HEADER,
     "This is not a message from the user or from a teammate.",
     `Reason: ${input.reason}`,
-    "Your last turn ended with work still open and nothing scheduled to bring you back. Do one of these now:",
-    "- Finish the work.",
+    'First: if you wait for the user\'s answer or approval, say so in one line ("I am waiting for your answer.") and stop. Do nothing more.',
+    "Never do an action that the user did not approve, such as a send, a booking, a payment, a deploy or a delete.",
+    "Only if you do not wait for the user, do one of these now:",
+    "- Finish the work that the user asked for and approved.",
     `- Open a wait with openbot.${AWAIT_EVENT_TOOL} and wakeAfterMinutes for the thing that you wait for.`,
     "- Ask the user with openbot.ask_user if only the user can unblock it.",
-    "- If the work is done, report it to the user and say that it is done.",
+    "- If the work is done, mark the plan steps completed, report it to the user and say that it is done.",
     `This is check ${input.nudge} of ${input.limit}. After the last check, OpenBot tells the user that the work stopped.`,
     "--- the request ---",
-    input.requestText,
+    requestText,
   ].join("\n");
 }
 

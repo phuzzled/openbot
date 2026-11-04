@@ -13,6 +13,9 @@
 //   S8   A routine run and a channel turn that promise get no check.
 //   S9   The user stops the nudge turn: the check ends.
 //   S10  A promise in a task: the nudge lands in that task.
+//   S11  An answer that waits on the user ("When you are ready, I'll start the migration."): no nudge.
+//   S12  A teammate's message after a promise: the check stays, and the nudge comes.
+//   S13  An older open wait of other work in the lane: a new promise still gets a check.
 // No provider, account or network is used. `bun run test:stall-sweep`. `ONLY=S1,S5` runs some.
 // Writes .openbot-build/stall-sweep-e2e/report.json.
 import assert from "node:assert/strict";
@@ -55,7 +58,7 @@ interface FakeTurn {
   delayMs?: number;
   /** Sends the plan when the turn starts, as well as at its end. */
   planEarly?: boolean;
-  calls?: { tool: string; arguments: Record<string, string | number | string[]> }[];
+  calls?: { tool: string; arguments: Record<string, string | number | boolean | string[]> }[];
 }
 
 // "<" and ">" are escaped, so a plan in a message that a turn sends does not end the plan around it.
@@ -716,6 +719,89 @@ try {
     assert.ok(!chatMessages(agent.id).some((message) => message.text?.includes("TASK REPORT")), "not in the own chat");
     assert.deepEqual(checks(agent.id), []);
     return { nudges: nudgeTurns(mark).length };
+  });
+
+  // S11: an answer that waits on an act of the user is not a promise: no check, no nudge.
+  await probe("S11 the answer waits on the user: no nudge", async () => {
+    const agent = await createAgent("Planned");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `Plan the database migration. ${plan({
+        steps: [],
+        answer: "Here is the migration plan. When you are ready, I'll start the migration.",
+      })} ${nudges([{ steps: [], answer: "NOT REACHED" }])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    assert.deepEqual(checks(agent.id), [], "no check for an answer that waits on the user");
+    await fireAndSettle(agent.id, mark, 0);
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge");
+    return { checks: 0, nudges: 0 };
+  });
+
+  // S12: a teammate's message in the own chat after a promise does not end the check.
+  await probe("S12 a teammate's message after a promise: the check stays, and the nudge comes", async () => {
+    const agent = await createAgent("Target");
+    const mate = await createAgent("Mate");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `${REQUEST} ${plan(promiseTurn)} ${nudges([{ steps: [], answer: "All 3 vendors replied. Vendor B is cheapest." }])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    const before = checks(agent.id);
+    assert.equal(before.length, 1, "the promise has a check");
+    const sent = await send(
+      mate.id,
+      `Tell Target about Friday. ${plan({
+        steps: [],
+        answer: "Sent.",
+        calls: [
+          {
+            tool: "send_message",
+            arguments: {
+              recipientAgentIds: [agent.id],
+              text: `FYI the office is closed Friday. ${plan({ steps: [], answer: "Noted." })}`,
+              expectsReply: false,
+            },
+          },
+        ],
+      })}`,
+    );
+    await settled(sent);
+    await waitFor("the teammate turn of the target", () =>
+      turnsSince(mark).some((turn) => turn.text.includes("office is closed")),
+    );
+    await waitFor("the target to be idle", () =>
+      current.service.listQueue(agent.id).deliveries.every((delivery) => ended(delivery.status)),
+    );
+    await sleep(800);
+    assert.deepEqual(checks(agent.id), before, "the teammate's message keeps the check");
+    await fireAndSettle(agent.id, mark, 1);
+    assert.equal(nudgeTurns(mark).length, 1, "the nudge comes");
+    assert.deepEqual(checks(agent.id), []);
+    return { checksAfterTeammate: before.length, nudges: nudgeTurns(mark).length };
+  });
+
+  // S13: an older wait of other work in the lane does not turn the sweep off for a new request.
+  await probe("S13 an older open wait of other work: a new promise still gets a check", async () => {
+    const agent = await createAgent("LongWait");
+    const watch = await send(
+      agent.id,
+      `Watch the domain renewal. ${plan({
+        steps: [],
+        answer: "Wait opened.",
+        calls: [{ tool: "await_event", arguments: { note: "Check the renewal.", wakeAfterMinutes: 600 } }],
+      })}`,
+    );
+    assert.equal(await settled(watch), "completed");
+    assert.equal(current.service.listWaits(agent.id).waits.length, 1, "the wait is open");
+    const id = await send(agent.id, `${REQUEST} ${plan(promiseTurn)}`);
+    assert.equal(await settled(id), "completed");
+    await sleep(500);
+    const [check] = checks(agent.id);
+    assert.equal(check?.requestDeliveryId, id, "the new promise has a check");
+    return { waits: current.service.listWaits(agent.id).waits.length, checks: checks(agent.id).length };
   });
 
   report.checks.push(...results.map((r) => ({ name: r.name, passed: r.ok, detail: r.detail })));

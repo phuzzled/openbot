@@ -1,6 +1,7 @@
-import type { QueueDelivery, QueueDeliveryStatus } from "@openbot/contracts/ipc";
+import type { AgentWait, QueueDelivery, QueueDeliveryStatus } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
-import { stallNudgeText } from "../agent/delivery-content";
+import { cutStallRequest, stallNudgeText } from "../agent/delivery-content";
+import { turnLeavesWaitOpen } from "../agent-waits/agent-waits";
 import type { RoutineDueSource } from "../routine-timer";
 import type { StallCheck, StallCheckStore } from "./stall-check-store";
 import { detectStall, type StallInput } from "./stall-detection";
@@ -15,6 +16,11 @@ export const STALL_REPEAT_MS = 60 * 60_000;
 export const STALL_NUDGE_LIMIT = 2;
 /** The most nudges of one agent in 24 hours, for all its requests. */
 export const STALL_DAILY_LIMIT = 12;
+/**
+ * The most age of a check before its nudge. An older check (of an agent hidden for a day, or of a
+ * host that was down) ends with no nudge, so a nudge never quotes a stale request.
+ */
+export const STALL_MAX_AGE_MS = 24 * 60 * 60_000;
 /** A nudge that could not start (no provider, a failed enqueue) tries again after this time. */
 const RETRY_MS = 15 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
@@ -35,6 +41,28 @@ export interface StallTurn extends Omit<StallInput, "excluded"> {
   deliveries: readonly Pick<QueueDelivery, "id" | "sender" | "recipientAgentId" | "text">[];
 }
 
+/** The facts of a check that tell whether a wait backs it. */
+export type StallCheckWaitKey = Pick<
+  StallCheck,
+  "agentId" | "taskId" | "requestDeliveryId" | "nudgeDeliveryId" | "createdAt"
+>;
+
+/**
+ * Whether an open wait backs a stall check: it runs in the check's lane (`laneOf`), and it serves the
+ * check's request or nudge, or it opened at or after the check. An older wait of the lane for other
+ * work, as one that a Stop left with no time, does not turn the sweep off for the lane.
+ */
+export function waitBacksStallCheck(
+  waits: readonly AgentWait[],
+  check: StallCheckWaitKey,
+  laneOf: (wait: AgentWait) => string | null,
+): boolean {
+  const ids = [check.requestDeliveryId, ...(check.nudgeDeliveryId ? [check.nudgeDeliveryId] : [])];
+  return waits.some(
+    (wait) => laneOf(wait) === check.taskId && (turnLeavesWaitOpen([wait], ids) || wait.createdAt >= check.createdAt),
+  );
+}
+
 export interface StallSweepHooks {
   /** Whether the agent can take new work now. A hidden, copied or deleted agent cannot: its check waits. */
   mayWake(agentId: string): boolean;
@@ -44,8 +72,12 @@ export interface StallSweepHooks {
   laneOpen(agentId: string, taskId: string | null): boolean;
   /** Whether a delivery of the lane is queued, starting or running. */
   laneBusy(agentId: string, taskId: string | null): boolean;
-  /** Whether an open wait of the agent runs in this lane. */
-  laneHasOpenWait(agentId: string, taskId: string | null): boolean;
+  /**
+   * Whether an open wait in the check's lane backs it: the wait serves the check's request or its
+   * nudge, or it opened at or after the check. An older, unrelated wait (one that a Stop left with no
+   * time) does not.
+   */
+  waitBacksCheck(check: StallCheckWaitKey): boolean;
   /** Whether the user sent the agent a message after this time. */
   userMessagedSince(agentId: string, since: string): boolean;
   deliveryStatus(deliveryId: string): QueueDeliveryStatus | undefined;
@@ -87,8 +119,9 @@ const isTerminal = (status: QueueDeliveryStatus | undefined) =>
  *
  * At its time, a check that is still valid queues one nudge in the lane: a message of the agent to
  * itself that gives the reason, the request, and the four ways to end the stall. A newer turn in the
- * lane, a busy lane, an open wait in the lane, or a message of the user since the check cancels it. A
- * hidden agent keeps its check until it shows again. With no ready provider the check waits.
+ * lane, a busy lane, a wait that backs the check, or a message of the user since the check cancels
+ * it. A teammate's message does not. A hidden agent keeps its check until it shows again, up to
+ * `STALL_MAX_AGE_MS`. With no ready provider the check waits.
  *
  * A nudge turn is checked as any turn, and counts against the nudges of its request. After
  * `STALL_NUDGE_LIMIT` nudges, or at the daily limit of the agent, a lane that stalls again gets one
@@ -120,13 +153,6 @@ export class StallSweep implements RoutineDueSource {
         deliveryIds.includes(lane.requestDeliveryId))
         ? lane
         : null;
-    if (turn.continued) {
-      // The request goes on in a plan continuation: its check waits for the end of the chain.
-      if (same) this.#store.setDue(same.id, null);
-      else if (lane) this.#store.delete(lane.id);
-      this.#hooks.changed();
-      return;
-    }
     // Only the user's requests and the agent's own messages (a task brief, a wake, a nudge) count. A
     // teammate's message has its own reply protocol.
     const excluded =
@@ -137,6 +163,16 @@ export class StallSweep implements RoutineDueSource {
           delivery.sender.kind !== "user" &&
           !(delivery.sender.kind === "agent" && delivery.sender.agentId === delivery.recipientAgentId),
       );
+    // An excluded turn of another request (a teammate's message, a turn with no delivery) does not
+    // resolve the promise: the lane keeps its check.
+    if (excluded && !same) return;
+    if (turn.continued) {
+      // The request goes on in a plan continuation: its check waits for the end of the chain.
+      if (same) this.#store.setDue(same.id, null);
+      else if (lane) this.#store.delete(lane.id);
+      this.#hooks.changed();
+      return;
+    }
     const stall = detectStall({ ...turn, excluded });
     if (!stall) {
       if (lane) {
@@ -155,7 +191,7 @@ export class StallSweep implements RoutineDueSource {
     const first = turn.deliveries.findLast((item) => item.sender.kind === "user") ?? turn.deliveries[0];
     const request = same
       ? { id: same.requestDeliveryId, text: same.requestText }
-      : first && { id: first.id, text: first.text };
+      : first && { id: first.id, text: cutStallRequest(first.text) };
     if (!request) return;
     const now = this.#now();
     this.#store.replace(
@@ -210,12 +246,18 @@ export class StallSweep implements RoutineDueSource {
         this.#store.delete(check.id);
         continue;
       }
-      if (check.dueAt === null || check.dueAt > nowText || !this.#hooks.mayWake(check.agentId)) continue;
+      if (check.dueAt === null || check.dueAt > nowText) continue;
+      // A check older than the age limit ends with no nudge, also while the agent is hidden.
+      if (now.getTime() - Date.parse(check.createdAt) > STALL_MAX_AGE_MS) {
+        this.#store.delete(check.id);
+        continue;
+      }
+      if (!this.#hooks.mayWake(check.agentId)) continue;
       const { agentId, taskId } = check;
       if (
         !this.#hooks.laneOpen(agentId, taskId) ||
         this.#hooks.laneBusy(agentId, taskId) ||
-        this.#hooks.laneHasOpenWait(agentId, taskId) ||
+        this.#hooks.waitBacksCheck(check) ||
         this.#hooks.userMessagedSince(agentId, check.createdAt)
       ) {
         this.#store.delete(check.id);
