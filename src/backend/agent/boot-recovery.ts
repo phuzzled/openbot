@@ -13,7 +13,7 @@ import type { DeliveryContext, MailboxStore } from "../mailbox-store";
 import { providerSync } from "../provider-client-effects";
 import { importProviderHistory } from "../provider-history-import";
 import type { ConversationRuntime } from "./conversation-runtime";
-import { conversationContentSignature } from "./delivery-content";
+import { conversationContentSignature, isWaitWakeDelivery } from "./delivery-content";
 import { markIncompleteImageGeneration } from "./image-generation";
 import type { MailboxSync } from "./mailbox-sync";
 import type { PlanContinuation } from "./plan-continuation";
@@ -329,12 +329,15 @@ export class BootRecovery {
     const lastTurnId = turnIds.at(-1);
     if (snapshot.messages.some((message) => message.turnId === lastTurnId && message.questionPrompt)) return false;
     if (interrupted && lastTurnId && this.#didOutwardAction(agent.id, lastTurnId, snapshot)) return false;
+    const plans = requestPlans(snapshot, turns);
     return this.#planContinuation.restore({
       agentId: agent.id,
       taskId: this.#mailbox.taskIdForDelivery(delivery.id),
       deliveryIds: [delivery.id],
       turnIds,
-      ...requestPlans(snapshot, turns),
+      plan: plans.plan,
+      // A wake of timed waits continues the request of the wait: its open steps are not earlier work.
+      earlierPlan: isWaitWakeDelivery(delivery) ? null : plans.earlierPlan,
     });
   }
 

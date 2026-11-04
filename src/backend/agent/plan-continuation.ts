@@ -101,7 +101,9 @@ function openSteps(plan: ConversationPlan, earlierSteps: ReadonlySet<string>): C
  * one task), the deliveries of the request, the count, and the plan of the last turn. A turn that
  * ends with open steps in the agent's own plan runs once more with a short note, until the plan is
  * done, the limit is reached, or a turn makes no progress. A step that was open, with the same text
- * and status, in the plan from before the request is left from earlier work and does not count.
+ * and status, in the plan from before the request is left from earlier work and does not count. A
+ * wake of timed waits continues the request that opened the wait, so its caller gives no earlier plan:
+ * the steps that were open at the wait are the steps of this request.
  * A turn with no open step also continues, at most `NEXT_STEP_LIMIT` times, when its answer only asks
  * whether to continue, or is short and ends on a next step that it did not do. A restart forgets every
  * chain; `restore` builds a plan chain again from the stored turns and plan, and the drain settles the
