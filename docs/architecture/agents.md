@@ -143,7 +143,10 @@ counts the wakes of the time. A wait with a time, or with `time_wakes` above 0, 
 A wake whose delivery ends failed, interrupted or cancelled leaves the wait with no time. The next
 pass of `TimedWaitWakes` gives it a time again (5 minutes, doubled for each time wake, at most 80
 minutes), until `TIME_WAKES_MAX`. The turn end (`waitWakeEnded`) and the restart recovery arm the
-shared timer for that pass.
+shared timer for that pass. A wake turn that the user stopped is not a cut-off: before its deliveries
+end, `waitWakeStopped` clears the time and the wake delivery of the waits it woke
+(`AgentWaitStore.endStoppedWake`), so they get no new time. They stay open, timed, in the Waits list,
+until a script event, a new time or the user's cancel ends them.
 A wake run that closes the wait it woke (`close_wait`) and then opens a new one (`await_event`)
 continues the same request: `AgentWaits` keeps, in memory for that run, the request text and the
 count of time wakes of the closed wait, and the new wait gets both. So the limit holds across a close

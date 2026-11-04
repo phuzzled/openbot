@@ -1550,6 +1550,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#stoppedTurn(agentId, taskId) === turnId || (taskId === null && this.#requestedNewChats.has(agentId)),
         hasOpenWait: (agentId, deliveryIds) => turnLeavesWaitOpen(this.#waits.list(agentId).waits, deliveryIds),
         waitWakeEnded: () => this.#routineTimer.arm(),
+        waitWakeStopped: (agentId, deliveryIds) => this.#timedWaits.wakeStopped(agentId, deliveryIds),
         routineAnswered: (agentId, deliveryId, answer) => {
           const agent = this.#store.list().find((item) => item.id === agentId);
           const run = this.#routines.runForDelivery(deliveryId);

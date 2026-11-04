@@ -211,6 +211,11 @@ export interface TurnHooks {
    * (`TimedWaitWakes`), so the shared timer derives its next fire again.
    */
   waitWakeEnded(agentId: string): void;
+  /**
+   * The user stopped a turn that served these wake deliveries of timed waits. Called before the
+   * deliveries end, so the waits they woke get no new time (`TimedWaitWakes.wakeStopped`).
+   */
+  waitWakeStopped(agentId: string, deliveryIds: readonly string[]): void;
   /** Ends the provider session of a routine run. Nothing for any other session, or a second time. */
   closeRoutineSession(externalThreadId: string): Effect.Effect<void>;
   /** Gives the answer of a routine run in its own session to the session of the agent's chat. */
@@ -516,6 +521,13 @@ export class TurnLifecycle {
   }
 
   /** The task of a provider thread, or null for the agent's own chat and its other threads. */
+  /** Tells the wait owner when the user stopped a turn that served wakes of timed waits. */
+  #wakeStopped(agentId: string, taskId: string | null, turnId: string, deliveries: readonly DeliveryContext[]): void {
+    const wakes = deliveries.filter(({ delivery }) => isWaitWakeDelivery(delivery)).map(({ delivery }) => delivery.id);
+    if (wakes.length > 0 && this.#hooks.turnStopped(agentId, taskId, turnId))
+      this.#hooks.waitWakeStopped(agentId, wakes);
+  }
+
   #taskForThread(agentId: string, externalThreadId: string): string | null {
     const threadId = this.#conversation.publicThreadId(agentId, externalThreadId);
     return this.#conversation.isTaskThread(threadId) ? this.#hooks.taskForThread(threadId) : null;
@@ -1303,6 +1315,7 @@ export class TurnLifecycle {
         yield* this.#hooks.routineAnswered(agentId, routineDelivery, latestAssistant.text);
       if (deliveries.length > 0) {
         const terminal = outcome === "failed" ? "failed" : outcome === "interrupted" ? "interrupted" : "completed";
+        if (!continuation && terminal !== "completed") this.#wakeStopped(agentId, laneTaskId, turnId, deliveries);
         for (const delivery of deliveries) {
           this.#refusedRetries.delete(delivery.delivery.id);
           this.#failoverRetries.delete(delivery.delivery.id);
@@ -1461,6 +1474,12 @@ export class TurnLifecycle {
     const trace = this.#traces.take(turnId, new Date().toISOString());
     const deliveries = yield* turnStep(() => this.#mailbox.findDeliveriesByTurn(agentId, turnId)).pipe(
       Effect.catchCause((cause) => report(cause).pipe(Effect.as([]))),
+    );
+    this.#wakeStopped(
+      agentId,
+      runningThreadId === null ? null : this.#taskForThread(agentId, runningThreadId),
+      turnId,
+      deliveries,
     );
     for (const { delivery } of deliveries) {
       yield* this.#mailbox

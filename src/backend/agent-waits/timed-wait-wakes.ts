@@ -59,12 +59,13 @@ export interface TimedWaitWakesOptions {
  * request and note (`wokenWaitsPromptText`). The lane is the agent's own chat, or the open task whose
  * thread opened the wait.
  *
- * A wake whose delivery ended failed, interrupted or cancelled (a restart, a provider error, a Stop)
- * did not continue the request, and the wait has no time left. The next pass gives it a time again,
+ * A wake whose delivery ended failed, interrupted or cancelled (a restart, a provider error) did not
+ * continue the request, and the wait has no time left. The next pass gives it a time again,
  * 5 minutes ahead and doubled for each time wake up to 80 minutes, so the follow-up is not lost. Each
  * wake counts against `TIME_WAKES_MAX`, and a wait at the limit gets no new time. A wake that completed
  * is final: the agent closed the wait, set a new time, or chose to leave it open. The owner of the turn
- * end arms the shared timer when a wake ends (`wakeEnded`), so the pass runs at once.
+ * end arms the shared timer when a wake ends (`wakeEnded`), so the pass runs at once. A wake that the
+ * user stopped gets no new time (`wakeStopped`): Stop means stop.
  *
  * It never imports the agent service facade.
  */
@@ -109,6 +110,22 @@ export class TimedWaitWakes implements RoutineDueSource {
       const status = wait.wakeDeliveryId ? this.#mailbox.getDelivery(wait.wakeDeliveryId)?.delivery.status : undefined;
       return status === "failed" || status === "interrupted" || status === "cancelled";
     });
+  }
+
+  /**
+   * The user stopped the turn of these wake deliveries. A Stop is not a cut-off: the timed waits that
+   * they woke get no new time and stay open with no time, and the user or the agent ends them.
+   */
+  wakeStopped(agentId: string, deliveryIds: readonly string[]): void {
+    const stopped = deliveryIds
+      .flatMap((deliveryId) => this.#store.wokenBy(deliveryId))
+      .filter((wait) => wait.agentId === agentId && wait.routineId === null && (wait.timeWakes ?? 0) > 0);
+    if (stopped.length === 0) return;
+    this.#store.endStoppedWake(
+      agentId,
+      stopped.map((wait) => wait.id),
+    );
+    this.#hooks.changed(agentId);
   }
 
   readonly processDue = Effect.fn("TimedWaitWakes.processDue")(function* (

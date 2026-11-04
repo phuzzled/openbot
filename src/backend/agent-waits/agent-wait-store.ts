@@ -233,6 +233,23 @@ export class AgentWaitStore {
     });
   }
 
+  /**
+   * The user stopped the wake of these waits. Clears their time and the delivery of that wake, so
+   * `spentTimeWakes` leaves them out and they get no new time. They stay open, timed, with their count.
+   */
+  endStoppedWake(agentId: string, waitIds: readonly string[]): void {
+    if (waitIds.length === 0) return;
+    const ids = waitIds.map(() => "?").join(", ");
+    this.#transaction(() => {
+      this.#database.connection
+        .prepare(`UPDATE agent_waits SET wake_delivery_id = NULL WHERE agent_id = ? AND wait_id IN (${ids})`)
+        .run(agentId, ...waitIds);
+      this.#database.connection
+        .prepare(`UPDATE fork_agent_wait_timers SET wake_at = NULL WHERE agent_id = ? AND wait_id IN (${ids})`)
+        .run(agentId, ...waitIds);
+    });
+  }
+
   /** The open waits that this delivery woke. A wait cancelled since then is not in the list. */
   wokenBy(deliveryId: string): AgentWait[] {
     return databaseRows(
