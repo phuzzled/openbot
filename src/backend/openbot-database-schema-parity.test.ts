@@ -15,6 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
+import { applyForkSchema } from "./database/fork-schema";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 import recordedSchemaHistory from "./openbot-database-schema-history.json";
 
@@ -41,6 +42,19 @@ describe("OpenBot database build paths", () => {
     const upgraded = await upgradedInstallDatabase();
 
     expect(readNormalizedDeclarations(upgraded)).toEqual(readNormalizedDeclarations(fresh));
+  });
+
+  // The fork's own tables are outside the migration sequence (`database/fork-schema.ts`). Each start
+  // adds them after the migrations, on both paths, so both paths must still agree after it.
+  it("gives a new install the same tables as an upgraded one after the fork schema step", async () => {
+    const fresh = await newInstallDatabase();
+    const upgraded = await upgradedInstallDatabase();
+    applyForkSchema(fresh);
+    applyForkSchema(upgraded);
+
+    expect(readTableShapes(upgraded)).toEqual(readTableShapes(fresh));
+    expect(readNormalizedDeclarations(upgraded)).toEqual(readNormalizedDeclarations(fresh));
+    expect(Object.keys(readTableShapes(fresh))).toContain("fork_agent_wait_timers");
   });
 
   it("records the same applied migration versions on both paths", async () => {

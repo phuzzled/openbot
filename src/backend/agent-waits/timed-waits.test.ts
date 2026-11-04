@@ -6,6 +6,7 @@ import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { deliveryPromptInput, deliveryWakesWaits, isWaitWakeDelivery } from "../agent/delivery-content";
 import type { OpenBotToolResponse } from "../agent/routine-tools";
+import { applyForkSchema } from "../database/fork-schema";
 import type { DeliveryContext } from "../mailbox-store";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import { AgentWaitStore } from "./agent-wait-store";
@@ -47,6 +48,7 @@ function harness(options: { hasRoutine?: boolean } = {}) {
   const db = new DatabaseSync(":memory:");
   databases.push(db);
   migrateOpenBotDatabase(db);
+  applyForkSchema(db);
   const database = { connection: db };
   let now = START;
   const clock = () => now;
