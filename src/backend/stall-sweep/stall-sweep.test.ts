@@ -13,7 +13,7 @@ import {
 import { applyForkSchema } from "../database/fork-schema";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import { StallCheckStore } from "./stall-check-store";
-import { detectStall, followUpPromise, type StallInput } from "./stall-detection";
+import { answerWaitsOnUser, detectStall, followUpPromise, type StallInput } from "./stall-detection";
 import {
   STALL_DAILY_LIMIT,
   STALL_GRACE_MS,
@@ -34,8 +34,8 @@ describe("followUpPromise", () => {
     "I'll keep an eye on the build and report back.",
     "I'll monitor the deploy.",
     "We'll keep you posted.",
-    "Once the vendors reply, I'll compare the quotes.",
-    "I'll compare the quotes as soon as they respond.",
+    "Once the vendors reply, I'll let you know.",
+    "I'll report back as soon as they respond.",
     "Done with step one.\n\nI'll check back in an hour.",
     "**I'll get back to you** with the numbers.",
     "Will update you when the job finishes.",
@@ -53,6 +53,11 @@ describe("followUpPromise", () => {
     "Gonna check back in an hour.",
     // The agent's own prose after a quoted draft still counts.
     "Here is the draft:\n\n> I'll follow up next week.\n\nI'll let you know when Sam replies.",
+    // A report or a watch under a condition stays a promise: the agent must open a wait (review 5, N4).
+    "I'll let you know when the vendors reply.",
+    "I'll check back after lunch.",
+    "When the build finishes, I'll then let you know.",
+    "I'll keep an eye on it until the job completes.",
   ])("finds a promise in %j", (answer) => {
     expect(followUpPromise(answer)).not.toBeNull();
   });
@@ -90,6 +95,37 @@ describe("followUpPromise", () => {
     "Do you want me to circle back tomorrow?",
     "Tomorrow I'll be off.",
     "",
+    // An approval, or the answer of a person, before the act (review 5, N1).
+    "After approval I'll deploy and report back.",
+    "The deploy plan is ready. After approval I'll deploy to production.",
+    "Pending your approval, I'll send it and update you.",
+    "Pending approval, I'll send it and keep you posted.",
+    "Say yes and I'll send it, then I'll follow up with Sam.",
+    "Approve and I'll book it, then I'll let you know when it's confirmed.",
+    "Give me the green light and I'll send it and keep you posted.",
+    "Once Andrew replies, I'll send the contract.",
+    "Once the user answers, I'll deploy to production.",
+    "When Sam confirms, I'll book it and let you know.",
+    "With your OK I'll deploy and report back.",
+    "If approved, I'll send it and let you know.",
+    "Once approved, I'll book the venue and let you know.",
+    "Once it's signed off, I'll publish it and update you.",
+    // An act under a condition is not a promise to nudge (review 5, N4).
+    "As soon as the funds arrive, I'll pay the supplier.",
+    "When the invoice comes in, I'll pay it.",
+    "Once legal answers, I'll sign the contract on your behalf.",
+    "After the build finishes, I'll deploy to production.",
+    "When the invoices are ready, I'll send them to all clients.",
+    "Once the vendors reply, I'll compare the quotes.",
+    "I'll compare the quotes as soon as they respond.",
+    "Once they reply, I'll compare them and let you know.",
+    "When the funds arrive, I'll let you know and pay the supplier.",
+    // More drafts (review 5, N5).
+    "Draft reply to Sam:\n\nThanks for the quote. I'll get back to you by Friday.",
+    "Proposed reply:\n\nThanks Sam, we'll keep you posted on the launch.",
+    "Here's what I'd send:\n\nThanks for the quote. I'll get back to you by Friday.",
+    "Suggested message to the team:\nWe will keep you posted on the launch.",
+    "Sam wrote 'we will follow up next week' so nothing to do yet.",
   ])("finds no promise in %j", (answer) => {
     expect(followUpPromise(answer)).toBeNull();
   });
@@ -134,8 +170,84 @@ describe("detectStall", () => {
     ["an answer that asks the user", { answer: "I'll follow up once you reply. Which vendor do you prefer?" }],
     ["an answer that waits for the user", { answer: "I'll wait for your approval." }],
     ["an answer with no promise and no plan", { answer: "All done. The report is attached." }],
+    ["an answer that waits on an approval", { answer: "After approval I'll deploy and report back." }],
+    ["a conditional payment", { answer: "As soon as the funds arrive, I'll pay the supplier." }],
   ])("is no stall for %s", (_name, change) => {
     expect(detectStall({ ...base, ...change })).toBeNull();
+  });
+});
+
+describe("detectStall with open steps and an answer that waits (review 5, N2)", () => {
+  const base: StallInput = {
+    outcome: "completed",
+    stopped: false,
+    continued: false,
+    excluded: false,
+    waitOpen: false,
+    waitsForAttention: false,
+    answer: "Step one is done.",
+    openSteps: ["Send the email to the board"],
+  };
+
+  it.each([
+    "Here's the draft email to the board. Let me know what you think.",
+    "Here is the draft. Does this look right?",
+    "Here is the draft. Shall I send it?",
+    "Here is the draft. When you are ready, I'll send it.",
+    "Here is the draft. Ready when you are.",
+    "Here is the draft. Waiting for your approval.",
+    "Here is the draft. After approval I'll send it.",
+    "Here is the draft. Say yes and I'll send it.",
+    "Here is the draft. Once Andrew replies, I'll send the contract.",
+    "Here is the draft. When Sam confirms, I'll book it",
+    "Here is the draft. If approved, I'll send it.",
+    "Here is the draft. With your OK I'll send it.",
+    "Here is the draft. Pending your approval, I'll send it.",
+    "Here is the draft. Anything else?",
+  ])("gives no open-steps stall for %j", (answer) => {
+    expect(detectStall({ ...base, answer })).toBeNull();
+  });
+
+  it.each(["Step one is done.", "I drafted the email. Next is the send step.", "The vendors reply on Monday."])(
+    "still finds open steps after %j",
+    (answer) => {
+      expect(detectStall({ ...base, answer })).toMatchObject({ kind: "openSteps" });
+    },
+  );
+
+  it("finds a promise before a last social question (review 5, N7)", () => {
+    expect(
+      detectStall({ ...base, openSteps: [], answer: "I'll let you know when they reply. Anything else?" }),
+    ).toEqual({ kind: "promise", reason: `You wrote: "I'll let you know when they reply."` });
+    expect(
+      detectStall({ ...base, openSteps: [], answer: "I emailed them.\n\nIs there anything else I can help with?" }),
+    ).toBeNull();
+    expect(detectStall({ ...base, openSteps: [], answer: "I'll let you know when they reply. Which one?" })).toBeNull();
+  });
+});
+
+describe("answerWaitsOnUser", () => {
+  it.each([
+    "Let me know what you think.",
+    "Does this look right?",
+    "Shall I send it?",
+    "Ready when you are.",
+    "After approval I'll deploy.",
+    "Once Andrew replies, I'll send the contract.",
+    "If you want, I'll send it.",
+    "Here is the draft:\n\n> Hi Sam\n\nLet me know if it works.",
+  ])("waits on the user in %j", (answer) => {
+    expect(answerWaitsOnUser(answer)).toBe(true);
+  });
+
+  it.each([
+    "Step one is done. Now I'll run the tests.",
+    "I'll let you know when the vendors reply.",
+    "Shall I continue?",
+    "The plan has a pending step.",
+    "",
+  ])("does not wait on the user in %j", (answer) => {
+    expect(answerWaitsOnUser(answer)).toBe(false);
   });
 });
 
@@ -357,12 +469,6 @@ describe("StallSweep", () => {
 
   it.each<[string, (state: ReturnType<typeof setup>["state"]) => void]>([
     [
-      "the lane is busy",
-      (state) => {
-        state.laneBusy = true;
-      },
-    ],
-    [
       "a wait backs the check",
       (state) => {
         state.waitBacks = true;
@@ -386,6 +492,37 @@ describe("StallSweep", () => {
     change(state);
     advance(STALL_GRACE_MS);
     await fire();
+    expect(state.nudges).toEqual([]);
+    expect(store.all()).toEqual([]);
+  });
+
+  it("puts off a due check while the lane is busy, then nudges (review 5, N6)", async () => {
+    const { store, state, sweep, advance, fire } = setup();
+    sweep.turnEnded(userTurn());
+    state.laneBusy = true;
+    advance(STALL_GRACE_MS);
+    await fire();
+    expect(state.nudges).toEqual([]);
+    const check = store.forLane("chief", null);
+    expect(check).toMatchObject({ nudges: 0 });
+    expect(Date.parse(check?.dueAt ?? "")).toBeGreaterThan(Date.parse("2026-11-01T10:00:00.000Z") + STALL_GRACE_MS);
+    advance(15 * 60_000);
+    await fire();
+    expect(state.nudges).toEqual([]);
+    state.laneBusy = false;
+    advance(15 * 60_000);
+    await fire();
+    expect(state.nudges).toHaveLength(1);
+  });
+
+  it("ends a check that a busy lane put off past the age limit", async () => {
+    const { store, state, sweep, advance, fire } = setup();
+    sweep.turnEnded(userTurn());
+    state.laneBusy = true;
+    for (let pass = 0; pass < 100; pass += 1) {
+      advance(15 * 60_000);
+      await fire();
+    }
     expect(state.nudges).toEqual([]);
     expect(store.all()).toEqual([]);
   });
@@ -589,6 +726,8 @@ describe("waitBacksStallCheck", () => {
     ["a wait that the nudge opened", { requestMessageId: "nudge-1" }, true],
     ["a wait that the nudge woke", { wakeDeliveryId: "nudge-1" }, true],
     ["a wait opened after the check", { createdAt: "2026-11-01T10:05:00.000Z" }, true],
+    // A status question while the timed wait of the first request is open (review 5, N3).
+    ["an older timed wait of the lane", { wakeAt: "2026-11-01T12:00:00.000Z" }, true],
   ])("%s: %s", (_name, change, backs) => {
     expect(waitBacksStallCheck([wait(change)], check, inChat)).toBe(backs);
   });

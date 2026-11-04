@@ -16,6 +16,11 @@
 //   S11  An answer that waits on the user ("When you are ready, I'll start the migration."): no nudge.
 //   S12  A teammate's message after a promise: the check stays, and the nudge comes.
 //   S13  An older open wait of other work in the lane: a new promise still gets a check.
+//   S14  An answer that waits on an approval ("After approval I'll deploy and report back."): no nudge.
+//   S15  A draft for review with an open "Send" step ("Let me know what you think."): no plan
+//        continuation and no check.
+//   S16  A status question while the timed wait of the first request is open: no nudge.
+//   S17  A busy lane at the due time: the check is put off, and the nudge comes when the lane is free.
 // No provider, account or network is used. `bun run test:stall-sweep`. `ONLY=S1,S5` runs some.
 // Writes .openbot-build/stall-sweep-e2e/report.json.
 import assert from "node:assert/strict";
@@ -802,6 +807,125 @@ try {
     const [check] = checks(agent.id);
     assert.equal(check?.requestDeliveryId, id, "the new promise has a check");
     return { waits: current.service.listWaits(agent.id).waits.length, checks: checks(agent.id).length };
+  });
+
+  // S14: an answer that waits on an approval, with no "you" as subject, is not a promise.
+  await probe("S14 the answer waits on an approval: no nudge", async () => {
+    const agent = await createAgent("Gated");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `Prepare the production deploy. ${plan({
+        steps: [],
+        answer: "The deploy plan is ready. After approval I'll deploy and report back.",
+      })} ${nudges([{ steps: [], answer: "NOT REACHED" }])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    await sleep(500);
+    assert.deepEqual(checks(agent.id), [], "no check for an answer that waits on an approval");
+    await fireAndSettle(agent.id, mark, 0);
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge");
+    return { checks: 0, nudges: 0 };
+  });
+
+  // S15: a draft for review with an open "Send" step: no plan continuation and no open-steps check.
+  await probe("S15 a draft for review with an open send step: no continuation and no check", async () => {
+    const agent = await createAgent("Drafter");
+    const mark = loggedTurns().length;
+    const turn: FakeTurn = {
+      steps: [
+        ["Draft the email to the board", "completed"],
+        ["Send the email to the board", "pending"],
+      ],
+      answer: "Here's the draft email to the board. Let me know what you think.",
+    };
+    const id = await send(agent.id, `Draft an email to the board about the budget. ${plan(turn, turn, turn)}`);
+    assert.equal(await settled(id, 30_000), "completed");
+    await waitFor("idle", () => current.service.listQueue(agent.id).deliveries.every((d) => ended(d.status)));
+    await sleep(800);
+    const continuationTurns = turnsSince(mark).filter((entry) => entry.note).length;
+    assert.equal(continuationTurns, 0, "no plan continuation");
+    assert.equal(continuationLines(agent.id).length, 0, "no continuation line");
+    assert.deepEqual(checks(agent.id), [], "no open-steps check");
+    await fireAndSettle(agent.id, mark, 0);
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge");
+    return { continuationTurns, checks: 0, nudges: 0 };
+  });
+
+  // S16: a status question while the timed wait of the first request is open gets no false nudge.
+  await probe("S16 a status question while the request's timed wait is open: no nudge", async () => {
+    const agent = await createAgent("Status");
+    const mark = loggedTurns().length;
+    const first = await send(
+      agent.id,
+      `Watch the deploy and tell me when it is done. ${plan({
+        steps: [],
+        answer: "I opened a wait and will check the deploy in 2 hours.",
+        calls: [{ tool: "await_event", arguments: { note: "Check the deploy.", wakeAfterMinutes: 120 } }],
+      })}`,
+    );
+    assert.equal(await settled(first), "completed");
+    assert.equal(current.service.listWaits(agent.id).waits.length, 1, "the timed wait is open");
+    const second = await send(
+      agent.id,
+      `Any news on the deploy? ${plan({ steps: [], answer: "Not yet. Still running. I'll let you know when it finishes." })} ${nudges([{ steps: [], answer: "NOT REACHED" }])}`,
+    );
+    assert.equal(await settled(second), "completed");
+    await sleep(500);
+    await fireAndSettle(agent.id, mark, 0);
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge while the timed wait is open");
+    assert.deepEqual(checks(agent.id), [], "the timed wait ends the check");
+    assert.equal(current.service.listWaits(agent.id).waits.length, 1, "the wait stays open");
+    return { nudges: 0, waits: 1 };
+  });
+
+  // S17: a teammate's long turn holds the lane when the check falls due: the check waits, then nudges.
+  await probe("S17 a busy lane at the due time: the check is put off, then the nudge comes", async () => {
+    const agent = await createAgent("Busy");
+    const mate = await createAgent("Mate2");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `${REQUEST} ${plan(promiseTurn)} ${nudges([{ steps: [], answer: "All 3 vendors replied. Vendor A is cheapest." }])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    await sleep(300);
+    assert.equal(checks(agent.id).length, 1, "the promise has a check");
+    const sent = await send(
+      mate.id,
+      `Tell the target. ${plan({
+        steps: [],
+        answer: "Sent.",
+        calls: [
+          {
+            tool: "send_message",
+            arguments: {
+              recipientAgentIds: [agent.id],
+              text: `FYI the printer moved. ${plan({ steps: [], answer: "Noted.", delayMs: 3000 })}`,
+              expectsReply: false,
+            },
+          },
+        ],
+      })}`,
+    );
+    await settled(sent);
+    await waitFor("the teammate turn of the target", () =>
+      turnsSince(mark).some((turn) => turn.text.includes("FYI the printer moved.")),
+    );
+    makeDue(agent.id);
+    await arm();
+    await sleep(500);
+    const duringBusy = checks(agent.id);
+    assert.equal(duringBusy.length, 1, "the busy lane keeps the check");
+    assert.ok((duringBusy[0]?.dueAt ?? "") > new Date().toISOString(), "the check is put off");
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge while the lane is busy");
+    await waitFor("the target to be idle", () =>
+      current.service.listQueue(agent.id).deliveries.every((delivery) => ended(delivery.status)),
+    );
+    await sleep(800);
+    await fireAndSettle(agent.id, mark, 1);
+    assert.equal(nudgeTurns(mark).length, 1, "the nudge comes when the lane is free");
+    return { duringBusy: duringBusy.length, nudges: nudgeTurns(mark).length };
   });
 
   report.checks.push(...results.map((r) => ({ name: r.name, passed: r.ok, detail: r.detail })));
