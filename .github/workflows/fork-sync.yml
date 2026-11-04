@@ -1,3 +1,4 @@
+# Fork workflow. See FORK-DEPLOY.md.
 name: Fork sync
 
 # Keeps this fork on the newest upstream OpenBot release, with the fork commits on top, and releases

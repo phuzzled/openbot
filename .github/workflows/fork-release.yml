@@ -1,3 +1,4 @@
+# Fork workflow. See FORK-DEPLOY.md.
 name: Fork release (Linux)
 
 # Builds the Linux AppImages of a fork release tag and publishes them as the latest GitHub Release of
