@@ -10,3 +10,5 @@
   An agent can also set a time to check back from a task, and the wake then runs in that task.
   When a check-back is cut off by a restart, a provider error or a Stop, OpenBot tries it again a few
   minutes later, so the follow-up is not lost.
+  When the agent closes a wait in a check-back and opens a new one, the new wait keeps your request
+  and the count of check-backs.

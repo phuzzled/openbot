@@ -142,6 +142,10 @@ A wake whose delivery ends failed, interrupted or cancelled leaves the wait with
 pass of `TimedWaitWakes` gives it a time again (5 minutes, doubled for each time wake, at most 80
 minutes), until `TIME_WAKES_MAX`. The turn end (`waitWakeEnded`) and the restart recovery arm the
 shared timer for that pass.
+A wake run that closes the wait it woke (`close_wait`) and then opens a new one (`await_event`)
+continues the same request: `AgentWaits` keeps, in memory for that run, the request text and the
+count of time wakes of the closed wait, and the new wait gets both. So the limit holds across a close
+and a reopen, and the next wake repeats the user's request, not the old note.
 
 A routine run (in its thread, or in the agent's own chat) does not resume a provider session.
 `DrainScheduler.startDelivery` starts a new session for each run with

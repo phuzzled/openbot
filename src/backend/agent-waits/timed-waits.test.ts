@@ -10,7 +10,14 @@ import { applyForkSchema } from "../database/fork-schema";
 import type { DeliveryContext } from "../mailbox-store";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import { AgentWaitStore } from "./agent-wait-store";
-import { AgentWaits, AWAIT_EVENT_TOOL, awaitEventToolSchema, TIME_WAKES_MAX, turnLeavesWaitOpen } from "./agent-waits";
+import {
+  AgentWaits,
+  AWAIT_EVENT_TOOL,
+  awaitEventToolSchema,
+  CLOSE_WAIT_TOOL,
+  TIME_WAKES_MAX,
+  turnLeavesWaitOpen,
+} from "./agent-waits";
 import { TimedWaitWakes } from "./timed-wait-wakes";
 
 const AGENT = "agent-1";
@@ -393,6 +400,80 @@ describe("wake that does not complete", () => {
     expect(third.wakes.nextDueAt()).toBeNull();
     await Effect.runPromise(third.wakes.processDue(new Date(START.getTime() + 40 * MINUTE), () => true));
     expect(hidden.store.get(AGENT, third.waitId)?.wakeAt).toBeNull();
+  });
+});
+
+describe("a new wait in a wake turn", () => {
+  /** Wakes a 30-minute wait and gives its wake to `turn-2`. Answers the woken wait. */
+  async function wakeTurn(test: ReturnType<typeof harness>, timeWakes?: number) {
+    test.call({ note: "Check vendor replies", wakeAfterMinutes: 30 });
+    const opened = test.store.list(AGENT)[0];
+    if (timeWakes !== undefined)
+      test.db
+        .prepare("UPDATE fork_agent_wait_timers SET time_wakes = ? WHERE wait_id = ?")
+        .run(timeWakes, opened?.id ?? "");
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    test.setNow(due);
+    await Effect.runPromise(test.wakes().processDue(due, () => true));
+    const wake = test.deliveries.get("wake-1");
+    if (!wake) throw new Error("The wake delivery is missing.");
+    test.turns.set("turn-2", [wake]);
+    const woken = test.store.list(AGENT)[0];
+    if (!woken) throw new Error("The woken wait is missing.");
+    return woken;
+  }
+  const close = (test: ReturnType<typeof harness>, waitId: string) =>
+    body(
+      test.waits.handleTool(
+        {
+          threadId: "thread-1",
+          turnId: "turn-2",
+          callId: crypto.randomUUID(),
+          namespace: "openbot",
+          tool: CLOSE_WAIT_TOOL,
+          arguments: { waitId },
+        },
+        { agentId: AGENT, inExecutionThread: false },
+      ),
+    );
+
+  it("keeps the user's request and the count of time wakes after the woken wait is closed", async () => {
+    const test = harness();
+    const woken = await wakeTurn(test);
+    const closed = close(test, woken.id);
+    expect(closed.success).toBe(true);
+    expect(String(closed.value.note)).toContain("keeps the request");
+    const reopen = test.call({ note: "Check again", wakeAfterMinutes: 60 }, "turn-2");
+    expect(reopen.success).toBe(true);
+    expect(String(reopen.value.continues)).toContain("1 of at most");
+    const [reopened] = test.store.list(AGENT);
+    expect(reopened).toMatchObject({
+      requestText: "Deploy the site and tell me when it is live.",
+      note: "Check again",
+      timeWakes: 1,
+      requestMessageId: "wake-1",
+    });
+    // The wake turn waits again, so its plan does not continue.
+    expect(turnLeavesWaitOpen(test.store.list(AGENT), ["wake-1"])).toBe(true);
+  });
+
+  it("refuses a new wait that would pass the limit of time wakes", async () => {
+    const test = harness();
+    const woken = await wakeTurn(test, TIME_WAKES_MAX - 1);
+    expect(woken.timeWakes).toBe(TIME_WAKES_MAX);
+    close(test, woken.id);
+    const refused = test.call({ note: "Check again", wakeAfterMinutes: 60 }, "turn-2");
+    expect(refused.success).toBe(false);
+    expect(test.store.list(AGENT)).toEqual([]);
+  });
+
+  it("gives a new wait in another turn its own request and no time wakes", async () => {
+    const test = harness();
+    const woken = await wakeTurn(test);
+    close(test, woken.id);
+    test.turns.set("turn-3", [delivery("request-3", { text: "Book the flights." })]);
+    expect(test.call({ note: "Check prices", wakeAfterMinutes: 60 }, "turn-3").success).toBe(true);
+    expect(test.store.list(AGENT)).toMatchObject([{ requestText: "Book the flights.", timeWakes: 0 }]);
   });
 });
 

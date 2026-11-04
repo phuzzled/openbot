@@ -11,6 +11,9 @@ export const AWAIT_EVENT_TOOL = "await_event";
 export const CLOSE_WAIT_TOOL = "close_wait";
 export const LIST_WAITS_TOOL = "list_waits";
 
+/** The most woken waits that `close_wait` remembers for a new wait of the same wake turn. */
+const CLOSED_WAKES_MAX = 64;
+
 /** Close to the limit, a new wait reminds the agent to close the waits it finished. */
 const NEAR_LIMIT_MARGIN = 3;
 
@@ -95,6 +98,12 @@ export class AgentWaits {
   readonly #mailbox: Pick<MailboxStore, "findDeliveriesByTurn" | "getDelivery">;
   readonly #hooks: AgentWaitsHooks;
   readonly #now: () => Date;
+  /**
+   * The woken waits that the agent closed in the run that woke them, by the delivery of that run: their
+   * request and their count of time wakes. A wait that the same run opens next continues that request
+   * (`#awaitEvent`). Only for the run that is in progress, so memory is enough; the oldest goes first.
+   */
+  readonly #closedWakes = new Map<string, { requestText: string; timeWakes: number }>();
 
   constructor(options: AgentWaitsOptions) {
     this.#store = options.store;
@@ -207,6 +216,15 @@ export class AgentWaits {
     const request =
       deliveries.findLast((context) => context.delivery.sender.kind === "user") ?? deliveries.at(0) ?? null;
     if (!request) return openBotToolFailure(sourceText("error.backend.agentWaitNoRequest"));
+    // A run that closed the wait it woke and opens a new one continues the same request: the new wait
+    // keeps that request, not the note of the wake, and its count of time wakes, so the limit stays.
+    const replaced = deliveries.flatMap((context) => {
+      const closed = this.#closedWakes.get(context.delivery.id);
+      return closed ? [closed] : [];
+    });
+    const inheritedWakes = Math.max(0, ...replaced.map((closed) => closed.timeWakes));
+    if (inheritedWakes >= TIME_WAKES_MAX)
+      return openBotToolFailure(sourceText("error.backend.agentWaitWakeCap", { limit: TIME_WAKES_MAX }));
     // A routine run wakes in the agent's own chat or the routine's thread, never in a task.
     if (inTask && (!wakeAt || routineId)) return openBotToolFailure(sourceText("error.backend.agentWaitTaskNeedsTime"));
     if (routineId && !this.#hooks.ownsRoutine(caller.agentId, routineId))
@@ -219,10 +237,12 @@ export class AgentWaits {
       wait = this.#store.open({
         agentId: caller.agentId,
         requestMessageId: request.delivery.id,
-        requestText: request.delivery.text,
+        requestText:
+          replaced.length > 0 ? replaced.map((closed) => closed.requestText).join("\n\n") : request.delivery.text,
         note,
         routineId: routineId ?? null,
         wakeAt,
+        timeWakes: inheritedWakes,
       });
     } catch (error) {
       if (!(error instanceof AgentWaitLimitError)) throw error;
@@ -266,6 +286,11 @@ export class AgentWaits {
           }
         : {}),
       ...(wait.wakeAt ? { wakeAt: wait.wakeAt } : {}),
+      ...(replaced.length > 0
+        ? {
+            continues: `This wait continues the request of the wait that you closed in this run, with its ${wait.timeWakes ?? 0} of at most ${TIME_WAKES_MAX} time wakes.`,
+          }
+        : {}),
       wakes: `${wakes.charAt(0).toUpperCase()}${wakes.slice(1)}.`,
       scriptEvent: `A local script names the wait with "waitId": "${wait.id}" next to "payload" in the body of its routine run request.`,
       next: "End your turn now. The run that wakes the wait repeats the request and your note. Close the wait with openbot.close_wait when the request is done.",
@@ -296,10 +321,19 @@ export class AgentWaits {
     const parsed = closeWaitToolSchema.safeParse(params.arguments);
     if (!parsed.success) return openBotToolFailure(z.prettifyError(parsed.error));
     const agentId = this.#waitOwner(parsed.data.agentId, caller);
+    const wait = this.#store.get(agentId, parsed.data.waitId);
     if (!this.#store.delete(agentId, parsed.data.waitId))
       return openBotToolFailure(sourceText("error.backend.agentWaitGone"));
+    const remembered = wait !== null && this.#rememberClosedWake(wait, caller, params.turnId);
     this.#changed(agentId);
-    return openBotToolResult({ closed: parsed.data.waitId });
+    return openBotToolResult({
+      closed: parsed.data.waitId,
+      ...(remembered
+        ? {
+            note: `If this request is not done, a wait that you open next in this run with openbot.${AWAIT_EVENT_TOOL} keeps the request and its count of time wakes (at most ${TIME_WAKES_MAX}).`,
+          }
+        : {}),
+    });
   }
 
   #listWaits(params: DynamicToolCallParams, caller: AgentWaitCaller): OpenBotToolResponse {
@@ -322,6 +356,27 @@ export class AgentWaits {
       throw new AgentWaitError(error instanceof Error ? error.message : String(error));
     }
     return agentId;
+  }
+
+  /**
+   * Keeps the request of an own wait that the run which woke it closed (`#closedWakes`). Answers
+   * whether it kept it.
+   */
+  #rememberClosedWake(wait: AgentWait, caller: AgentWaitCaller, turnId: string): boolean {
+    if (wait.agentId !== caller.agentId || wait.wakeDeliveryId === null) return false;
+    const turnDeliveries = this.#mailbox.findDeliveriesByTurn(caller.agentId, turnId);
+    if (!turnDeliveries.some((context) => context.delivery.id === wait.wakeDeliveryId)) return false;
+    const earlier = this.#closedWakes.get(wait.wakeDeliveryId);
+    this.#closedWakes.delete(wait.wakeDeliveryId);
+    this.#closedWakes.set(wait.wakeDeliveryId, {
+      requestText: earlier ? `${earlier.requestText}\n\n${wait.requestText}` : wait.requestText,
+      timeWakes: Math.max(earlier?.timeWakes ?? 0, wait.timeWakes ?? 0),
+    });
+    for (const key of this.#closedWakes.keys()) {
+      if (this.#closedWakes.size <= CLOSED_WAKES_MAX) break;
+      this.#closedWakes.delete(key);
+    }
+    return true;
   }
 
   #isPending(deliveryId: string): boolean {
