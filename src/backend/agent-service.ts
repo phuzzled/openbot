@@ -1104,6 +1104,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       conversation: this.#conversation,
       mailboxSync: this.#mailboxSync,
       threads: this.#threads,
+      planContinuation: this.#planContinuation,
       hooks: {
         emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
         // A deleted routine takes its runs with it, so a run without a record counts as quiet:

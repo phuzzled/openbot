@@ -1602,6 +1602,11 @@ export class MailboxStore {
     return this.#contexts(run);
   }
 
+  /** Every delivery that waits for its automatic plan continuation, as a restart finds them. */
+  waitingPlanContinuations(): DeliveryContext[] {
+    return this.#contexts(this.#state.deliveries.filter(waitsForPlanContinuation));
+  }
+
   /** The other deliveries of this lane that wait for the same automatic plan continuation. */
   planContinuationsToStartWith(deliveryId: string): DeliveryContext[] {
     const next = this.#state.deliveries.find((candidate) => candidate.id === deliveryId);

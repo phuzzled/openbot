@@ -82,6 +82,8 @@ interface Chain {
   openSteps: string;
   /** The open steps of the chat's plan before the request, by text and status. */
   earlierSteps: ReadonlySet<string>;
+  /** Set when a restart restored the chain: the last turn of the request before the restart. */
+  restartTurnId?: string;
 }
 
 function laneKey(agentId: string, taskId: string | null): string {
@@ -102,8 +104,8 @@ function openSteps(plan: ConversationPlan, earlierSteps: ReadonlySet<string>): C
  * and status, in the plan from before the request is left from earlier work and does not count.
  * A turn with no open step also continues, at most `NEXT_STEP_LIMIT` times, when its answer only asks
  * whether to continue, or is short and ends on a next step that it did not do. A restart forgets every
- * chain, and the drain then settles the waiting deliveries. It never imports the mailbox or the
- * service facade.
+ * chain; `restore` builds a plan chain again from the stored turns and plan, and the drain settles the
+ * waiting deliveries of any other. It never imports the mailbox or the service facade.
  */
 export class PlanContinuation {
   readonly #limit: number;
@@ -175,6 +177,50 @@ export class PlanContinuation {
   }
 
   /**
+   * Restores after a restart the chain of a request whose last turn ended, or was interrupted, with
+   * open steps in its plan. `turnIds` are the turns of the request in order, so the count goes on from
+   * the turns that ran: the limit stays the same. `plan` is the newest plan of those
+   * turns, and `earlierPlan` the chat's plan from before the request. The next continuation note says
+   * that OpenBot restarted. A delivery of the same last turn joins a chain that is already restored.
+   * Returns false, and restores nothing, when no step is open or the request used its limit.
+   */
+  restore(input: {
+    agentId: string;
+    taskId: string | null;
+    deliveryIds: readonly string[];
+    turnIds: readonly string[];
+    plan: ConversationPlan | null;
+    earlierPlan: ConversationPlan | null;
+  }): boolean {
+    const key = laneKey(input.agentId, input.taskId);
+    const lastTurnId = input.turnIds.at(-1);
+    const existing = this.#chains.get(key);
+    if (existing?.restartTurnId !== undefined && existing.restartTurnId === lastTurnId) {
+      this.#chains.set(key, { ...existing, deliveryIds: new Set([...existing.deliveryIds, ...input.deliveryIds]) });
+      return true;
+    }
+    const count = input.turnIds.length;
+    if (!input.plan || lastTurnId === undefined || count > this.#limit) return false;
+    const earlierSteps = new Set(
+      (input.earlierPlan?.steps ?? []).filter((step) => step.status !== "completed").map((step) => stepKey(step)),
+    );
+    const open = openSteps(input.plan, earlierSteps);
+    if (open.length === 0) return false;
+    this.#chains.set(key, {
+      deliveryIds: new Set(input.deliveryIds),
+      count,
+      kind: "plan",
+      shown: { current: count, limit: this.#limit },
+      nextSteps: 0,
+      plan: input.plan,
+      openSteps: JSON.stringify(open.map(stepKey)),
+      earlierSteps,
+      restartTurnId: lastTurnId,
+    });
+    return true;
+  }
+
+  /**
    * The note that starts the continuation of this delivery, or null when no chain waits for it:
    * after a restart, a Stop, a new chat, or when other messages wait in the lane (`othersQueued`).
    * A start that goes back to the queue, as during a compaction, claims the same note again.
@@ -187,7 +233,12 @@ export class PlanContinuation {
       return null;
     }
     return chain.kind === "plan" && chain.plan
-      ? planContinuationPrompt(openSteps(chain.plan, chain.earlierSteps), chain.shown.current, chain.shown.limit)
+      ? planContinuationPrompt(
+          openSteps(chain.plan, chain.earlierSteps),
+          chain.shown.current,
+          chain.shown.limit,
+          chain.restartTurnId !== undefined,
+        )
       : nextStepContinuationPrompt(chain.shown.current, chain.shown.limit);
   }
 
