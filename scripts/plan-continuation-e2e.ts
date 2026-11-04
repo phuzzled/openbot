@@ -19,7 +19,7 @@
 //   6. Stop during a continuation ends the chain. The next message works.
 //   7. A message that waits in the queue stops the continuation and runs next.
 //   8. A side thread continues in its own thread only.
-//   9. A routine run does not continue.
+//   9. A routine run continues in its own session, and its run ends once with the last answer.
 //  10. A restart while a continuation waits completes the request with no new turn.
 // Not checked: a message sent in the short gap before a continuation starts. The drain starts the
 // continuation at once, and a hidden agent refuses new messages. Check 7 covers the same rule.
@@ -115,7 +115,9 @@ const answer = (message) => {
     case "config/batchWrite": return write({ id: message.id, result: {} });
     case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + (++threads), turns: [] } } });
     case "thread/resume": return write({ id: message.id, result: { thread: { id: params.threadId, turns: [] } } });
-    case "thread/unsubscribe": return write({ id: message.id, result: { status: "Unsubscribed" } });
+    case "thread/unsubscribe":
+      log({ method: "unsubscribe", threadId: params.threadId });
+      return write({ id: message.id, result: { status: "Unsubscribed" } });
     case "thread/turns/list":
     case "thread/items/list": return write({ id: message.id, result: { data: [], nextCursor: null } });
     case "thread/read": return write({ id: message.id, result: { thread: { id: params.threadId, turns: [] } } });
@@ -215,7 +217,7 @@ interface LoggedTurn {
   text: string;
 }
 
-function loggedTurns(): LoggedTurn[] {
+function loggedEntries(): LoggedTurn[] {
   let text = "";
   try {
     text = readFileSync(fakeLog, "utf8");
@@ -225,8 +227,18 @@ function loggedTurns(): LoggedTurn[] {
   return text
     .split("\n")
     .filter(Boolean)
-    .map((line): LoggedTurn => JSON.parse(line))
-    .filter((entry) => entry.method === "turn");
+    .map((line): LoggedTurn => JSON.parse(line));
+}
+
+function loggedTurns(): LoggedTurn[] {
+  return loggedEntries().filter((entry) => entry.method === "turn");
+}
+
+/** The fake's turns and session closes of one provider session, in order. */
+function sessionLog(threadId: string | undefined): string[] {
+  return loggedEntries().flatMap((entry) =>
+    entry.threadId === threadId && (entry.method === "turn" || entry.method === "unsubscribe") ? [entry.method] : [],
+  );
 }
 
 async function check(name: string, run: () => Promise<unknown>) {
@@ -749,18 +761,93 @@ try {
     return { taskId: task.id };
   });
 
-  await check("a routine run does not continue", async () => {
+  await check("a routine run continues in its own session and ends with one result", async () => {
     const agent = await createAgent("Routine");
     const routine = current.service.createRoutine(
       {
         agentId: agent.id,
         name: "Daily report",
-        instruction: `Write the report. ${plan({
+        instruction: `Write the report. ${plan(
+          {
+            steps: [
+              ["Collect", "completed"],
+              ["Write", "pending"],
+            ],
+            answer: "Collected.",
+          },
+          {
+            steps: [
+              ["Collect", "completed"],
+              ["Write", "completed"],
+            ],
+            answer: "The report is written.",
+          },
+        )}`,
+        active: false,
+        timezone: "UTC",
+        schedule: { kind: "custom", expression: "0 9 * * *" },
+      },
+      { recordConversationEvent: false },
+    );
+    const mark = loggedTurns().length;
+    const since = current.events.length;
+    await runCauseEffect(current.service.testRoutine({ agentId: agent.id, routineId: routine.id }));
+    await waitFor("the routine run to end", () => {
+      const [run] = current.service.listRoutineRuns({ agentId: agent.id, routineId: routine.id });
+      return run && (run.status === "succeeded" || ended(run.status)) ? run : null;
+    });
+    const turns = turnsSince(mark);
+    assert.deepEqual(
+      turns.map((turn) => turn.note),
+      [false, true],
+      "One continuation turn runs.",
+    );
+    assert.equal(turns[1]?.threadId, turns[0]?.threadId, "The continuation runs in the run's own session.");
+    await waitFor("the run's session to close", () => sessionLog(turns[0]?.threadId).includes("unsubscribe"));
+    assert.deepEqual(
+      sessionLog(turns[0]?.threadId),
+      ["turn", "turn", "unsubscribe"],
+      "The session stays open for the continuation and closes once after it.",
+    );
+    assert.ok(turns[1]?.text.includes("[pending] Write"), "The note names the open step.");
+    const runs = current.service.listRoutineRuns({ agentId: agent.id, routineId: routine.id });
+    assert.equal(runs.length, 1, "One run.");
+    assert.equal(runs[0]?.status, "succeeded", "The run succeeds.");
+    const runEvents = chatMessages(agent.id).flatMap((message) =>
+      message.itemType?.startsWith("routine-run-event:") ? [message.itemType.split(":")[1]] : [],
+    );
+    assert.deepEqual(runEvents.at(-1), "succeeded", "The run ends with one result.");
+    assert.equal(runEvents.filter((status) => status === "succeeded").length, 1, "One run result shows.");
+    // A routine with its own side thread shows its runs there.
+    const routineThread = current.service.listTasks(agent.id).tasks[0]?.threadId;
+    assert.ok(routineThread, "The routine has its side thread.");
+    assert.equal(continuationLines(agent.id, routineThread).length, 1, "One continuation line shows.");
+    assert.ok(
+      chatMessages(agent.id, routineThread).some((message) => message.text === "The report is written."),
+      "The last answer shows.",
+    );
+    assert.equal(errorsFor(agent.id, since).length, 0, "No error shows.");
+    // The digest of the run goes to the agent's own session once, with the answer of the last turn.
+    const next = await send(agent.id, "What did the report say?");
+    assert.equal(await settled(next), "completed");
+    const chatTurn = turnsSince(mark).at(-1)?.text ?? "";
+    assert.ok(chatTurn.includes("The report is written."), "The digest has the last answer.");
+    assert.ok(!chatTurn.includes("Collected."), "The digest does not have the first answer.");
+    return { turns: turns.length, runStatus: runs[0]?.status, runEvents };
+  });
+
+  await check("a routine run whose plan stops after one turn ends as before", async () => {
+    const agent = await createAgent("Asking");
+    const routine = current.service.createRoutine(
+      {
+        agentId: agent.id,
+        name: "Quick check",
+        instruction: `Check it. ${plan({
           steps: [
             ["Collect", "completed"],
             ["Write", "pending"],
           ],
-          answer: "Collected.",
+          answer: "Which format do you want?",
         })}`,
         active: false,
         timezone: "UTC",
@@ -770,12 +857,13 @@ try {
     );
     const mark = loggedTurns().length;
     await runCauseEffect(current.service.testRoutine({ agentId: agent.id, routineId: routine.id }));
-    await waitFor("the routine turn", () => turnsSince(mark).length >= 1);
-    await waitFor("the routine run to end", () =>
-      current.service.listQueue(agent.id).deliveries.every((delivery) => ended(delivery.status)),
-    );
-    assert.equal(turnsSince(mark).length, 1, "No continuation turn runs.");
-    assert.equal(continuationLines(agent.id).length, 0);
+    await waitFor("the routine run to end", () => {
+      const [run] = current.service.listRoutineRuns({ agentId: agent.id, routineId: routine.id });
+      return run && (run.status === "succeeded" || ended(run.status)) ? run : null;
+    });
+    assert.equal(turnsSince(mark).length, 1, "No continuation turn runs after a question.");
+    const routineThread = current.service.listTasks(agent.id).tasks[0]?.threadId;
+    assert.equal(continuationLines(agent.id, routineThread).length, 0);
     return { turns: 1 };
   });
 

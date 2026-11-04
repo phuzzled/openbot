@@ -2967,8 +2967,12 @@ export class MailboxStore {
       planContinuation: _planContinuation,
       ...publicDelivery
     } = delivery;
-    // Between two turns of one request, the request still runs for the person who sent it.
-    if (waitsForPlanContinuation(delivery)) {
+    // Between two turns of one request, the request still runs for the person who sent it, also while
+    // the continuation starts. So a routine run does not go back to queued and start again.
+    if (
+      waitsForPlanContinuation(delivery) ||
+      (delivery.status === "starting" && delivery.planContinuation?.queued === true)
+    ) {
       publicDelivery.status = "running";
       publicDelivery.turnId = delivery.planContinuation?.turnIds.at(-1) ?? null;
     }
