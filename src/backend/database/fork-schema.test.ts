@@ -153,4 +153,110 @@ describe("fork schema", () => {
     expect(store.list("chief")).toEqual([]);
     expect(timers()).toEqual([{ wait_id: other.id }]);
   });
+
+  describe("stall sweep tables", () => {
+    const STALL_OBJECTS = [
+      { type: "table", name: "fork_stall_checks" },
+      { type: "index", name: "fork_stall_checks_due_at" },
+      { type: "index", name: "fork_stall_checks_lane" },
+      { type: "table", name: "fork_stall_nudges" },
+      { type: "index", name: "fork_stall_nudges_agent" },
+    ];
+    const stallObjects = (db: DatabaseSync) =>
+      db.prepare("SELECT type, name FROM sqlite_master WHERE name LIKE 'fork_stall_%' ORDER BY name").all();
+    const insertDelivery = (db: DatabaseSync, deliveryId: string, agentId: string) => {
+      db.prepare(
+        `INSERT INTO projection_mailbox_messages (message_id, sender_kind, sender_agent_id, text, reply_to_message_id,
+           created_at, message_json, last_event_sequence)
+         VALUES (?, 'user', NULL, 'Get quotes.', NULL, '2026-01-01', '{}', 0)`,
+      ).run(`message-${deliveryId}`);
+      db.prepare(
+        `INSERT INTO projection_deliveries (delivery_id, message_id, recipient_agent_id, status, turn_id, error,
+           created_at, delivery_json, last_event_sequence)
+         VALUES (?, ?, ?, 'completed', NULL, NULL, '2026-01-01', '{}', 0)`,
+      ).run(deliveryId, `message-${deliveryId}`, agentId);
+    };
+    const insertCheck = (
+      db: DatabaseSync,
+      checkId: string,
+      agentId: string,
+      deliveryId: string,
+      taskId: string | null = null,
+    ) =>
+      db
+        .prepare(
+          `INSERT INTO fork_stall_checks (check_id, agent_id, task_id, request_delivery_id, request_text, turn_id, reason,
+             due_at, nudges, nudge_delivery_id, created_at)
+           VALUES (?, ?, ?, ?, 'Get quotes.', 'turn-1', 'promise', '2026-06-01T00:00:00.000Z', 0, NULL, ?)`,
+        )
+        .run(checkId, agentId, taskId, deliveryId, new Date().toISOString());
+
+    it("gives a new database the stall tables, and no fork migration version", async () => {
+      const database = await openDatabase();
+      expect(stallObjects(database.connection)).toEqual(STALL_OBJECTS);
+      expect(maxVersion(database.connection)).toEqual({ version: 55 });
+    });
+
+    it.each([34, 54])("gives a database upgraded from released schema %i the stall tables", (version) => {
+      const db = databaseAt(version);
+      migrateOpenBotDatabase(db);
+      applyForkSchema(db);
+      expect(stallObjects(db)).toEqual(STALL_OBJECTS);
+      expect(maxVersion(db)).toEqual({ version: 55 });
+    });
+
+    it("is idempotent, and keeps one check per lane", async () => {
+      const database = await openDatabase();
+      const root = database.userDataPath;
+      insertDelivery(database.connection, "delivery-1", "chief");
+      insertCheck(database.connection, "check-1", "chief", "delivery-1");
+      insertCheck(database.connection, "check-2", "chief", "delivery-1", "task-1");
+      expect(() => insertCheck(database.connection, "check-3", "chief", "delivery-1")).toThrow();
+      applyForkSchema(database.connection);
+      database.close();
+      opened.splice(opened.indexOf(database), 1);
+      const reopened = await openDatabase(root);
+      expect(stallObjects(reopened.connection)).toEqual(STALL_OBJECTS);
+      expect(reopened.connection.prepare("SELECT check_id FROM fork_stall_checks ORDER BY check_id").all()).toEqual([
+        { check_id: "check-1" },
+        { check_id: "check-2" },
+      ]);
+    });
+
+    it("deletes at start a check whose request is gone, and old or orphan nudge log rows", () => {
+      const db = new DatabaseSync(":memory:");
+      databases.push(db);
+      migrateOpenBotDatabase(db);
+      applyForkSchema(db);
+      insertDelivery(db, "delivery-1", "chief");
+      insertCheck(db, "check-kept", "chief", "delivery-1");
+      insertCheck(db, "check-gone", "helper", "delivery-gone");
+      const recent = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO fork_stall_nudges (agent_id, sent_at) VALUES ('chief', ?), ('chief', '2020-01-01T00:00:00.000Z'),
+           ('ghost', ?)`,
+      ).run(recent, recent);
+      applyForkSchema(db);
+      expect(db.prepare("SELECT check_id FROM fork_stall_checks").all()).toEqual([{ check_id: "check-kept" }]);
+      expect(db.prepare("SELECT agent_id, sent_at FROM fork_stall_nudges").all()).toEqual([
+        { agent_id: "chief", sent_at: recent },
+      ]);
+    });
+
+    it("deletes the checks and the nudge log with their agent", async () => {
+      const database = await openDatabase();
+      const db = database.connection;
+      insertDelivery(db, "delivery-1", "chief");
+      insertDelivery(db, "delivery-2", "helper");
+      insertCheck(db, "check-chief", "chief", "delivery-1");
+      insertCheck(db, "check-helper", "helper", "delivery-2");
+      db.prepare("INSERT INTO fork_stall_nudges (agent_id, sent_at) VALUES ('chief', ?), ('helper', ?)").run(
+        new Date().toISOString(),
+        new Date().toISOString(),
+      );
+      database.hardDeleteAgent("agents:delete", "chief", null, []);
+      expect(db.prepare("SELECT check_id FROM fork_stall_checks").all()).toEqual([{ check_id: "check-helper" }]);
+      expect(db.prepare("SELECT agent_id FROM fork_stall_nudges").all()).toEqual([{ agent_id: "helper" }]);
+    });
+  });
 });
