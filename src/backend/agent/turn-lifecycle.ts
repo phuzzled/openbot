@@ -297,6 +297,11 @@ export class TurnLifecycle {
       acted: boolean;
     }
   >();
+  /**
+   * The provider sessions of routine runs whose plan continues. Their turn ended, but the session
+   * stays open for the continuation turn, which `DrainScheduler` starts on it.
+   */
+  readonly #continuedRoutineSessions = new Set<string>();
   /** Running turns a provider plan refused, with the reset in epoch seconds when the provider gave it. */
   readonly #limitedTurns = new Map<string, number | null>();
   /**
@@ -480,9 +485,11 @@ export class TurnLifecycle {
   }
 
   /**
-   * Whether a completed turn may continue its plan: it served only the user's or the agent's own
-   * messages, the user did not stop it, its last line asks nothing but whether to continue and does not say it waits, opened no wait and holds no question,
-   * approval or takeover, and no other message waits in its lane.
+   * Whether a completed turn may continue its plan: it served only messages of the user, of the agent
+   * itself or of a teammate, or, in the run's own session (`routineRun`), of a routine; the user did
+   * not stop it, its last line asks nothing but whether to continue and does not say it waits, opened
+   * no wait and holds no question, approval or takeover, and no other message waits in its lane. A
+   * teammate that asked for a result gets it after the last turn of the chain.
    */
   #planContinues(
     agentId: string,
@@ -490,6 +497,7 @@ export class TurnLifecycle {
     turnId: string,
     deliveries: readonly DeliveryContext[],
     answer: string | undefined,
+    routineRun: boolean,
   ): boolean {
     if (deliveries.length === 0 || this.#planContinuation.limit <= 0) return false;
     if (
@@ -497,7 +505,8 @@ export class TurnLifecycle {
         ({ delivery, channelId }) =>
           channelId === undefined &&
           (delivery.sender.kind === "user" ||
-            (delivery.sender.kind === "agent" && delivery.sender.agentId === agentId)),
+            delivery.sender.kind === "agent" ||
+            (delivery.sender.kind === "routine" && routineRun)),
       )
     )
       return false;
@@ -1210,21 +1219,18 @@ export class TurnLifecycle {
         latestAssistant !== undefined &&
         deliveries.some(({ delivery }) => delivery.sender.kind === "routine") &&
         isNoUpdateAnswer(latestAssistant.text);
-      // Before the deliveries end: until then they hold their lane, so no later turn of that lane
-      // starts before the digest is in its handoff. A chat turn that starts at the same time keeps
-      // the digest for its next turn (see `ThreadLifecycle.deletePendingHandoff`).
-      const routineDelivery = deliveries[0]?.delivery.id;
-      if (routineSession && routineDelivery && outcome === "completed" && !quiet && !markerAnswer && latestAssistant)
-        yield* this.#hooks.routineAnswered(agentId, routineDelivery, latestAssistant.text);
       const laneTaskId = taskTurn ? this.#taskForThread(agentId, threadId) : null;
+      // A routine run continues in its own session, which stays open for the next turn. A quiet run
+      // or a no-update answer has nothing more to do.
       const planContinues =
         outcome === "completed" &&
         reportedFailure === undefined &&
         running !== undefined &&
         !channelTurn &&
-        !routineSession &&
+        !quiet &&
+        !markerAnswer &&
         (!taskTurn || laneTaskId !== null) &&
-        this.#planContinues(agentId, laneTaskId, turnId, deliveries, latestAssistant?.text);
+        this.#planContinues(agentId, laneTaskId, turnId, deliveries, latestAssistant?.text, routineSession);
       const continuation = planContinues
         ? this.#planContinuation.consider({
             agentId,
@@ -1239,6 +1245,22 @@ export class TurnLifecycle {
           })
         : null;
       if (!continuation) this.#planContinuation.cancel(agentId, laneTaskId);
+      else if (routineSession) this.#continuedRoutineSessions.add(threadId);
+      // Before the deliveries end: until then they hold their lane, so no later turn of that lane
+      // starts before the digest is in its handoff. A chat turn that starts at the same time keeps
+      // the digest for its next turn (see `ThreadLifecycle.deletePendingHandoff`). A run whose plan
+      // continues gives only the answer of its last turn.
+      const routineDelivery = deliveries[0]?.delivery.id;
+      if (
+        routineSession &&
+        routineDelivery &&
+        !continuation &&
+        outcome === "completed" &&
+        !quiet &&
+        !markerAnswer &&
+        latestAssistant
+      )
+        yield* this.#hooks.routineAnswered(agentId, routineDelivery, latestAssistant.text);
       if (deliveries.length > 0) {
         const terminal = outcome === "failed" ? "failed" : outcome === "interrupted" ? "interrupted" : "completed";
         for (const delivery of deliveries) {
@@ -1364,8 +1386,11 @@ export class TurnLifecycle {
         ),
         Effect.ensuring(
           Effect.andThen(
-            Effect.sync(() => this.#completingTurns.delete(turnId)),
-            this.#hooks.closeRoutineSession(threadId),
+            Effect.sync(() => {
+              this.#completingTurns.delete(turnId);
+              return this.#continuedRoutineSessions.delete(threadId);
+            }),
+            (continued) => (continued ? Effect.void : this.#hooks.closeRoutineSession(threadId)),
           ),
         ),
       ),

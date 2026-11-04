@@ -1606,6 +1606,11 @@ export class MailboxStore {
     return this.#contexts(run);
   }
 
+  /** Every delivery that waits for its automatic plan continuation, as a restart finds them. */
+  waitingPlanContinuations(): DeliveryContext[] {
+    return this.#contexts(this.#state.deliveries.filter(waitsForPlanContinuation));
+  }
+
   /** The other deliveries of this lane that wait for the same automatic plan continuation. */
   planContinuationsToStartWith(deliveryId: string): DeliveryContext[] {
     const next = this.#state.deliveries.find((candidate) => candidate.id === deliveryId);
@@ -2971,8 +2976,12 @@ export class MailboxStore {
       planContinuation: _planContinuation,
       ...publicDelivery
     } = delivery;
-    // Between two turns of one request, the request still runs for the person who sent it.
-    if (waitsForPlanContinuation(delivery)) {
+    // Between two turns of one request, the request still runs for the person who sent it, also while
+    // the continuation starts. So a routine run does not go back to queued and start again.
+    if (
+      waitsForPlanContinuation(delivery) ||
+      (delivery.status === "starting" && delivery.planContinuation?.queued === true)
+    ) {
       publicDelivery.status = "running";
       publicDelivery.turnId = delivery.planContinuation?.turnIds.at(-1) ?? null;
     }
