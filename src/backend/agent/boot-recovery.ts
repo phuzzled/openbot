@@ -344,6 +344,7 @@ export class BootRecovery {
       plan: plans.plan,
       // A wake of timed waits continues the request of the wait: its open steps are not earlier work.
       earlierPlan: isWaitWakeDelivery(delivery) ? null : plans.earlierPlan,
+      request: delivery.sender.kind === "user" ? delivery.text : null,
     });
   }
 

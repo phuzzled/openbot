@@ -49,7 +49,7 @@ import type { AttentionBrowserHost, AttentionRegistry } from "./attention-regist
 import type { BrowserUploadTarget } from "./browser-uploads";
 import { type ContextCompaction, compactsOnRequest } from "./context-compaction";
 import type { ConversationRuntime } from "./conversation-runtime";
-import { isWaitWakeDelivery } from "./delivery-content";
+import { isStallNudgeDelivery, isWaitWakeDelivery } from "./delivery-content";
 import type { DeltaBuffer } from "./delta-buffer";
 import type { FailureContext, FailureSignal } from "./failure-signal";
 import { readCapturedSteps } from "./handoff-tool-steps";
@@ -577,8 +577,9 @@ export class TurnLifecycle {
       )
     )
       return false;
-    // An answer that waits on the user, on an approval or on a named person does not continue.
-    if (answerWaitsOnUser(answer)) return false;
+    // An answer that waits on the user, on an approval or on a named person does not continue. A stall
+    // nudge is a check-in turn that cannot act, and a continuation of it would run with no restriction.
+    if (answerWaitsOnUser(answer) || deliveries.some(({ delivery }) => isStallNudgeDelivery(delivery))) return false;
     return (
       !this.#hooks.turnStopped(agentId, taskId, turnId) &&
       !this.#hooks.hasOpenWait(
@@ -1313,6 +1314,7 @@ export class TurnLifecycle {
                   (message) => message.itemType === CONVERSATION_PLAN_ITEM_TYPE && message.turnId !== turnId,
                 )?.plan ?? null),
             answer: latestAssistant?.text,
+            request: deliveries.find(({ delivery }) => delivery.sender.kind === "user")?.delivery.text ?? null,
           })
         : null;
       if (!continuation) this.#planContinuation.cancel(agentId, laneTaskId);
