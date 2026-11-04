@@ -160,6 +160,11 @@ function openbotGuidance(namespace: string, tool: string): string {
     case "list_api_keys":
     case "remove_api_key":
       return "When a command or service needs an API key, token, or password, such as for IMAP, call openbot.list_api_keys; when the key is missing, call openbot.request_api_key with the variable name that the program reads, such as OPENAI_API_KEY. Never tell the user to connect to the server, edit a file, or set a variable for it. When the user pastes a key in chat, ask for it again with request_api_key. Read the saved key from its file in the command, and quote the path, which can hold spaces: OPENAI_API_KEY=\"$(cat '<path>')\" npm run deploy. Never print or log the key, and never copy it into the workspace, a commit, a message, a tool argument, or your memory. Ask the user before you write it into a .env file. Remove a key with openbot.remove_api_key only when the user asks.";
+    case "await_event":
+    case "list_waits":
+    case "close_wait":
+      // TODO(feat/timed-waits): after await_event gets wakeAfterMinutes and wakeAt, say here that a timed wait needs no routine.
+      return "A wait is a promise to the user: open one before you end a turn that leaves work outside it, such as a build, a person's reply, or a later check. Only a run of one of your routines or a script event wakes a wait, so when no routine of yours runs soon enough, create one for the check first. On a wake, read the request and the note, then act. Close a wait when its request is done or can no longer be done, and report the result to the user without being asked.";
     case "interrupt_agent":
       return "openbot.list_agents reports each agent's status, queuedMessages, turnStartedAt, and lastActivityAt. openbot.interrupt_agent takes the agent id and a short reason. It stops only a turn that works on your message, cancels your requests still queued for that agent, and sends the agent a notice. Do not interrupt work only because it is slow.";
     case "list_agents":

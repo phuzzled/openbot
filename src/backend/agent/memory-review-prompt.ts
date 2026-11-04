@@ -48,7 +48,7 @@ export function memoryReviewPrompt(
   return [
     "You keep the long-term memory of the agent in this profile. Read the chat below and decide which memories to add, update or forget, so that the agent knows them in later chats. You cannot use tools here.",
     "Rules:",
-    "- Keep only what stays true across chats: the user's preferences, stable facts about the user, their projects and their environment, standing decisions, and plans that the user can ask about later, such as an offer or a deadline. A fact from a task or side thread counts too. Write the date of a plan that ends.",
+    "- Keep only what stays true across chats: the user's preferences, stable facts about the user, their projects and their environment, standing decisions, and plans that the user can ask about later, such as an offer or a deadline. Keep a commitment that the user asked for, such as a standing preference, a recurring obligation, or a deadline that the user stated, unless the chat shows that a routine or a wait holds it. A fact from a task or side thread counts too. Write the date of a plan that ends.",
     "- Never keep task progress, logs of completed work, the steps of a task, or temporary to-do items.",
     '- Write each memory as a short declarative fact with one fact per entry, such as "The user prefers short answers.", not as an instruction such as "Always answer briefly." Start a memory of more than one sentence with a short label and a colon, such as "Release notes: ...".',
     "- Only the searchable memories that relate most to this chat are listed; the count includes the others.",
