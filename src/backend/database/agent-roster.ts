@@ -255,6 +255,8 @@ export class AgentRoster {
         ).run(agentId);
         db.prepare("UPDATE workflow_steps SET agent_id = NULL WHERE agent_id = ?").run(agentId);
         db.prepare("DELETE FROM agent_waits WHERE agent_id = ?").run(agentId);
+        // The fork's wake times of those waits (`fork-schema.ts`).
+        db.prepare("DELETE FROM fork_agent_wait_timers WHERE agent_id = ?").run(agentId);
         db.prepare("DELETE FROM projection_reactions WHERE agent_id = ?").run(agentId);
         db.prepare("DELETE FROM projection_deliveries WHERE recipient_agent_id = ?").run(agentId);
         db.prepare("DELETE FROM projection_queue_state WHERE agent_id = ?").run(agentId);

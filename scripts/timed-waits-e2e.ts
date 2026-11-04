@@ -328,7 +328,7 @@ try {
   /** Moves the wake time of every wait of the agent into the past. The next timer pass finds it due. */
   const makeDue = (agentId: string) =>
     current.database.connection
-      .prepare("UPDATE agent_waits SET wake_at = ? WHERE agent_id = ? AND wake_at IS NOT NULL")
+      .prepare("UPDATE fork_agent_wait_timers SET wake_at = ? WHERE agent_id = ? AND wake_at IS NOT NULL")
       .run("2020-01-01T00:00:00.000Z", agentId);
   /** Opens one timed wait in a new request and answers its delivery id. `wakeTurn` is the wake's turn. */
   async function openTimedWait(agentId: string, request: string, wakeTurn: FakeTurn) {

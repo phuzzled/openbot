@@ -7,6 +7,7 @@ import { Effect, Result } from "effect";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import { storedIO, storedSync } from "../stored-state-effects";
 import { databaseRow, errorCode, requiredNumberColumn, requiredStringColumn } from "./database-rows";
+import { applyForkSchema } from "./fork-schema";
 
 export interface OrchestrationEventInput {
   aggregateType: string;
@@ -212,6 +213,8 @@ export class DatabaseCore {
 
   #migrate(closedCleanly: boolean): void {
     migrateOpenBotDatabase(this.connection, { closedCleanly });
+    // After the upstream migrations, outside their version sequence (see `fork-schema.ts`).
+    applyForkSchema(this.connection);
   }
 }
 
