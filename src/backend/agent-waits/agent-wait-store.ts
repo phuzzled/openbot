@@ -2,6 +2,14 @@
  * The open waits of every agent. Rows are written directly, not through `database.dispatch`: a wait
  * holds a copy of the user's request, and the event log is never deleted from. A closed or cancelled
  * wait is deleted. It owns no events: the runtime says when something changed.
+ *
+ * A timed wait is a wait that has a wake time, or that a wake time woke (`time_wakes` > 0). Only its
+ * time, a script event that names it, or a run of the routine that its `routine_id` names wakes it. A
+ * run of any other routine does not, also after the wake cleared its time: the agent set a time, so it
+ * did not ask for each routine run. A timed wait that the agent leaves open with no new time stays
+ * open, and only a script event, a new time or the user's cancel ends that. A wait with no time and no
+ * routine is woken by every routine run of its agent, as before wake times. A wait with no time that
+ * gets one becomes a timed wait.
  */
 
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -35,7 +43,7 @@ export interface OpenAgentWaitInput {
   requestText: string;
   note: string;
   routineId: string | null;
-  /** When the wait wakes by itself, as an ISO time. Null: only a routine run or a script event wakes it. */
+  /** When the wait wakes by itself, as an ISO time. Null: a routine run or a script event wakes it. */
   wakeAt: string | null;
 }
 
@@ -119,12 +127,16 @@ export class AgentWaitStore {
     );
   }
 
-  /** The waits a run of this routine wakes, when no event names one wait. */
+  /**
+   * The waits a run of this routine wakes, when no event names one wait: the waits of this routine,
+   * and the waits of no routine that are not timed.
+   */
   forRoutineRun(agentId: string, routineId: string): AgentWait[] {
     return databaseRows(
       this.#database.connection
         .prepare(
-          `SELECT * FROM agent_waits WHERE agent_id = ? AND (routine_id IS NULL OR routine_id = ?)
+          `SELECT * FROM agent_waits WHERE agent_id = ?
+           AND (routine_id = ? OR (routine_id IS NULL AND wake_at IS NULL AND time_wakes = 0))
            ORDER BY created_at, wait_id`,
         )
         .all(agentId, routineId),
@@ -162,14 +174,14 @@ export class AgentWaitStore {
   }
 
   /**
-   * Marks the waits that their wake time woke, and clears that time in the same statement, so a
-   * wait wakes once for each time it is given.
+   * Marks the waits that their wake time woke, clears that time and counts the wake in the same
+   * statement, so a wait wakes once for each time it is given.
    */
   markWokenByTime(agentId: string, waitIds: readonly string[], deliveryId: string): void {
     if (waitIds.length === 0) return;
     this.#database.connection
       .prepare(
-        `UPDATE agent_waits SET woken_at = ?, wake_delivery_id = ?, wake_at = NULL
+        `UPDATE agent_waits SET woken_at = ?, wake_delivery_id = ?, wake_at = NULL, time_wakes = time_wakes + 1
          WHERE agent_id = ? AND wait_id IN (${waitIds.map(() => "?").join(", ")})`,
       )
       .run(this.#now().toISOString(), deliveryId, agentId, ...waitIds);
@@ -197,5 +209,6 @@ function toWait(row: DynamicRecord): AgentWait {
     wokenAt: optionalStringColumn(row, "woken_at"),
     wakeDeliveryId: optionalStringColumn(row, "wake_delivery_id"),
     wakeAt: optionalStringColumn(row, "wake_at"),
+    timeWakes: requiredNumberColumn(row, "time_wakes"),
   };
 }

@@ -560,7 +560,7 @@ export const OPENBOT_TOOL_DEFINITIONS: readonly OpenBotToolDefinition[] = [
   {
     name: AWAIT_EVENT_TOOL,
     description:
-      "Open a wait when you cannot finish the current request in this turn because you wait for something outside it: a build, a deploy, a later check. OpenBot shows the wait to the user until you close it. To check back later, give wakeAfterMinutes (5 to 43200) or wakeAt (ISO 8601 with a time zone offset, at most 30 days away), not both: OpenBot then wakes the wait at that time in your own chat, also when you have no routine. The next run of one of your routines also wakes the wait, or a local script event that names its waitId. The run that wakes it repeats the request and your note. In that run, call this tool again with wakeAfterMinutes or wakeAt to check back again later. Give routineId to let only that routine wake it. After this call, tell the user what you wait for and when you check back, and end your turn.",
+      "Open a wait when you cannot finish the current request in this turn because you wait for something outside it: a build, a deploy, a later check. OpenBot shows the wait to the user until you close it. To check back later, give wakeAfterMinutes (5 to 43200) or wakeAt (ISO 8601 with a time zone offset, at most 30 days away), not both: OpenBot then wakes the wait at that time in your own chat, also when you have no routine; a routine run does not wake a timed wait. With no time, the next run of one of your routines wakes the wait. A local script event that names its waitId wakes any wait. The run that wakes it repeats the request and your note. In that run, call this tool again with wakeAfterMinutes or wakeAt to check back again later. Give routineId to let only that routine wake it. After this call, tell the user what you wait for and when you check back, and end your turn.",
     shape: awaitEventToolSchema.shape,
   },
   {
@@ -572,7 +572,7 @@ export const OPENBOT_TOOL_DEFINITIONS: readonly OpenBotToolDefinition[] = [
   {
     name: LIST_WAITS_TOOL,
     description:
-      "List your open waits, or another local agent's when you give agentId: waitId, note, openedAt, routineId (null: any of its routines wakes it), wokenAt, and wakeAt (the time it wakes by itself, or null). Use it to find and close waits whose request is done. Read-only.",
+      "List your open waits, or another local agent's when you give agentId: waitId, note, openedAt, routineId (null: any of its routines wakes it, unless it has or had a wake time), wokenAt, and wakeAt (the time it wakes by itself, or null). Use it to find and close waits whose request is done. Read-only.",
     shape: listWaitsToolSchema.shape,
   },
   {

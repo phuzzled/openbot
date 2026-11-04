@@ -110,6 +110,7 @@ function harness(options: { hasRoutine?: boolean } = {}) {
       ),
     );
   return {
+    db,
     store,
     waits,
     wakes,
@@ -290,6 +291,66 @@ describe("timed wait wakes", () => {
     expect(turnLeavesWaitOpen(test.store.list(AGENT), ["user-2"])).toBe(false);
     test.store.delete(AGENT, test.store.list(AGENT)[0]?.id ?? "");
     expect(turnLeavesWaitOpen(test.store.list(AGENT), ["wake-1"])).toBe(false);
+  });
+});
+
+describe("routine runs and timed waits", () => {
+  it("wakes a timed wait only at its time, its own routine or a script event, also after its time is spent", async () => {
+    const test = harness({ hasRoutine: true });
+    test.db
+      .prepare(`INSERT INTO projection_agent_routines
+      (routine_id, agent_id, name, instruction, active, timezone, created_at, updated_at, last_event_sequence)
+      VALUES ('inbox', ?, 'Inbox', 'Check the inbox.', 1, 'UTC', '2026-01-01', '2026-01-01', 1)`)
+      .run(AGENT);
+    test.call({ note: "Check vendor replies", wakeAfterMinutes: 2880 });
+    test.call({ note: "Wait for the inbox routine" });
+    test.call({ note: "Check the build", wakeAfterMinutes: 60, routineId: "inbox" });
+    const byNote = (note: string) => test.store.list(AGENT).find((wait) => wait.note === note);
+    const [timed, untimed, named] = [
+      byNote("Check vendor replies"),
+      byNote("Wait for the inbox routine"),
+      byNote("Check the build"),
+    ];
+    const woken = (deliveryId: string) =>
+      test.waits
+        .wokenBy(deliveryId)
+        .map((wait) => wait.id)
+        .sort();
+    const run = (deliveryId: string, waitId: string | null = null) => {
+      test.deliveries.set(
+        deliveryId,
+        delivery(deliveryId, {
+          sender: {
+            kind: "routine",
+            routineId: "inbox",
+            runId: deliveryId,
+            routineName: "Inbox",
+            scheduledFor: START.toISOString(),
+          },
+          status: "completed",
+        }),
+      );
+      test.waits.wakeForRun({ agentId: AGENT, routineId: "inbox" }, deliveryId, waitId);
+    };
+    run("run-1");
+    expect(woken("run-1")).toEqual([untimed?.id, named?.id].sort());
+    // The wake time of the first wait wakes it, and clears its time. A routine run still does not wake it.
+    const due = new Date(START.getTime() + 2881 * MINUTE);
+    test.setNow(due);
+    await Effect.runPromise(test.wakes().processDue(due, () => true));
+    expect(test.store.get(AGENT, timed?.id ?? "")).toMatchObject({ wakeAt: null, timeWakes: 1 });
+    run("run-2");
+    expect(woken("run-2")).not.toContain(timed?.id);
+    // A script event that names the wait wakes it, once its wake run has ended.
+    test.deliveries.set("wake-1", delivery("wake-1", { status: "completed" }));
+    run("run-3", timed?.id ?? null);
+    expect(woken("run-3")).toEqual([timed?.id]);
+  });
+
+  it("says that a timed wait does not wake on a routine run", () => {
+    const test = harness({ hasRoutine: true });
+    const result = test.call({ note: "Check vendor replies", wakeAfterMinutes: 2880 });
+    expect(String(result.value.wakes)).not.toContain("routines");
   });
 });
 

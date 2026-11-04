@@ -105,7 +105,9 @@ routines. A due wait of an agent that `RoutineScheduler.mayDrain` allows wakes i
 agent to itself in its own chat, with `expectsReply: false` (`isWaitWakeDelivery`); the chat shows it
 once, as received. `markWokenByTime` clears the time with the wake, so a wait wakes once, and a time
 missed while the app was closed fires once at the first pass. A wait that a pending run already
-continues loses its time and gets no second wake.
+continues loses its time and gets no second wake. `agent_waits.time_wakes` (also migration 56)
+counts the wakes of the time. A wait with a time, or with `time_wakes` above 0, is timed:
+`AgentWaitStore.forRoutineRun` leaves it out, unless its `routine_id` is the routine of the run.
 
 A routine run in an agent's own chat (no task, channel or messaging delivery) does not resume the
 chat's provider session. `DrainScheduler.startDelivery` starts a new session for it with

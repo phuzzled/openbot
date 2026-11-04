@@ -72,10 +72,11 @@ export interface AgentWaitCaller {
 /**
  * Open waits: work an agent stopped because it waits for something outside the turn. The agent
  * opens, lists and closes them with three tools, and another local agent can list and close them
- * with `agentId`; the user cancels them from the chat; a routine run of the agent wakes them, and
- * so does the wake time that the agent gave (`TimedWaitWakes`). The input of the run that wakes a
- * wait repeats the request and the note, so the agent can continue the request after its context
- * lost it.
+ * with `agentId`; the user cancels them from the chat. The wake time that the agent gave wakes a
+ * timed wait (`TimedWaitWakes`); a routine run of the agent wakes a wait with no time, and a run of
+ * its own routine wakes a wait that names one (`AgentWaitStore` says which waits are timed). The input
+ * of the run that wakes a wait repeats the request and the note, so the agent can continue the
+ * request after its context lost it.
  *
  * It never imports the agent service facade.
  */
@@ -106,8 +107,9 @@ export class AgentWaits {
 
   /**
    * Marks the waits that a routine run wakes, after its delivery is queued. A script event that
-   * names a wait wakes only that wait. Any other run wakes every wait of its agent that has no
-   * routine or has this routine. A wait whose last wake has not ended yet stays with that run.
+   * names a wait wakes only that wait. Any other run wakes every wait of its agent that has this
+   * routine, or that has no routine and is not timed. A wait whose last wake has not ended yet stays
+   * with that run.
    */
   wakeForRun(run: { agentId: string; routineId: string }, deliveryId: string, waitId: string | null): void {
     const named = waitId ? this.#store.get(run.agentId, waitId) : null;
@@ -176,9 +178,13 @@ export class AgentWaits {
           note: `This run continues these open waits. They wake again at ${wakeAt}. End your turn now. Open a new wait only for a different request.`,
         });
       }
+      // A timed wait of no routine wakes only at a time: left open with no time, nothing wakes it.
+      const timed = continued.some((wait) => isTimedWait(wait) && wait.routineId === null);
       return openBotToolResult({
         waitIds: continued.map((wait) => wait.id),
-        note: `This run continues these open waits. To wait again, leave them open and end your turn. To check back at a time, call openbot.${AWAIT_EVENT_TOOL} again with wakeAfterMinutes. Open a new wait only for a different request.`,
+        note: timed
+          ? `This run continues these open waits. A wait that you gave a time wakes only at a time or by a script event, not on a routine run. To check back, call openbot.${AWAIT_EVENT_TOOL} again with wakeAfterMinutes. If you will not check back, tell the user and close the wait. Open a new wait only for a different request.`
+          : `This run continues these open waits. To wait again, leave them open and end your turn. To check back at a time, call openbot.${AWAIT_EVENT_TOOL} again with wakeAfterMinutes. Open a new wait only for a different request.`,
       });
     }
     // The user's message comes first; a routine run that waits serves its own instruction.
@@ -219,9 +225,10 @@ export class AgentWaits {
     if (wait.wakeAt) this.#hooks.wakeTimesChanged();
     this.#changed(caller.agentId);
     const openWaits = this.#store.count(caller.agentId);
+    // A timed wait does not wake on the runs of every routine: only of the one that it names.
     const runWakes = wait.routineId
       ? `the next run of routine ${wait.routineId}`
-      : this.#hooks.hasRoutine(caller.agentId)
+      : !wait.wakeAt && this.#hooks.hasRoutine(caller.agentId)
         ? "the next run of any of your routines"
         : null;
     const wakes = [
@@ -334,12 +341,23 @@ export function turnLeavesWaitOpen(waits: readonly AgentWait[], deliveryIds: rea
   );
 }
 
+/**
+ * Whether the wait is timed: it has a wake time, or a wake time woke it. Only its time, its own
+ * routine or a script event wakes it (`AgentWaitStore`).
+ */
+export function isTimedWait(wait: Pick<AgentWait, "wakeAt" | "timeWakes">): boolean {
+  return (wait.wakeAt ?? null) !== null || (wait.timeWakes ?? 0) > 0;
+}
+
 /** The part of a run's input that continues its woken waits. */
 export function wokenWaitsPromptText(waits: readonly AgentWait[]): string | null {
   if (waits.length === 0) return null;
+  const again = waits.some((wait) => isTimedWait(wait) && wait.routineId === null)
+    ? `To check back later, call openbot.${AWAIT_EVENT_TOOL} with wakeAfterMinutes: a wait that you gave a time does not wake on a routine run.`
+    : `To wait for the next run again, leave the wait open. To check back later, call openbot.${AWAIT_EVENT_TOOL} with wakeAfterMinutes.`;
   return [
     "--- open waits that this run wakes ---",
-    `You opened these waits with openbot.${AWAIT_EVENT_TOOL}. Continue each request with what this run brings. When a request is done, or can no longer be done, tell the user and call openbot.${CLOSE_WAIT_TOOL} with its wait id. To wait for the next run again, leave the wait open. To check back later, call openbot.${AWAIT_EVENT_TOOL} with wakeAfterMinutes.`,
+    `You opened these waits with openbot.${AWAIT_EVENT_TOOL}. Continue each request with what this run brings. When a request is done, or can no longer be done, tell the user and call openbot.${CLOSE_WAIT_TOOL} with its wait id. ${again}`,
     ...waits.flatMap((wait) => [
       "",
       `Wait ID: ${wait.id}`,
