@@ -322,6 +322,80 @@ describe("timed wait wakes", () => {
   });
 });
 
+describe("wake that does not complete", () => {
+  /** Opens a 30-minute wait and wakes it. Answers the wait id, the wake time and the scheduler. */
+  async function woken(test: ReturnType<typeof harness>) {
+    test.call({ note: "Check vendor replies", wakeAfterMinutes: 30 });
+    const wakes = test.wakes();
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    test.setNow(due);
+    await Effect.runPromise(wakes.processDue(due, () => true));
+    return { waitId: test.store.list(AGENT)[0]?.id ?? "", due, wakes };
+  }
+  const endWake = (test: ReturnType<typeof harness>, deliveryId: string, status: QueueDelivery["status"]) => {
+    const wake = test.deliveries.get(deliveryId);
+    if (!wake) throw new Error("The wake delivery is missing.");
+    test.deliveries.set(deliveryId, { ...wake, delivery: { ...wake.delivery, status } });
+  };
+
+  it.each(["failed", "interrupted", "cancelled"] as const)(
+    "gives the wait a time again when its wake ends %s, and wakes it once more",
+    async (status) => {
+      const test = harness();
+      const { waitId, due, wakes } = await woken(test);
+      // While the wake runs, nothing is due.
+      expect(wakes.nextDueAt()).toBeNull();
+      endWake(test, "wake-1", status);
+      const later = new Date(due.getTime() + MINUTE);
+      expect(wakes.nextDueAt()).not.toBeNull();
+      await Effect.runPromise(wakes.processDue(later, () => true));
+      const again = new Date(later.getTime() + 5 * MINUTE).toISOString();
+      expect(test.store.list(AGENT)).toMatchObject([{ id: waitId, wakeAt: again, timeWakes: 1 }]);
+      expect(wakes.nextDueAt()).toBe(again);
+      // One wake for that time, which counts against the limit.
+      const next = new Date(later.getTime() + 6 * MINUTE);
+      test.setNow(next);
+      await Effect.runPromise(wakes.processDue(next, () => true));
+      await Effect.runPromise(wakes.processDue(next, () => true));
+      expect(test.enqueued.map((wake) => wake.key)).toEqual([`wait-wake:${waitId}:0`, `wait-wake:${waitId}:1`]);
+      expect(test.store.list(AGENT)).toMatchObject([{ wakeAt: null, timeWakes: 2, wakeDeliveryId: "wake-2" }]);
+    },
+  );
+
+  it("doubles the delay for each time wake, up to 80 minutes", async () => {
+    const test = harness();
+    const { waitId } = await woken(test);
+    endWake(test, "wake-1", "failed");
+    test.db.prepare("UPDATE fork_agent_wait_timers SET time_wakes = 6 WHERE wait_id = ?").run(waitId);
+    const now = new Date(START.getTime() + 40 * MINUTE);
+    await Effect.runPromise(test.wakes().processDue(now, () => true));
+    expect(test.store.get(AGENT, waitId)?.wakeAt).toBe(new Date(now.getTime() + 80 * MINUTE).toISOString());
+  });
+
+  it("gives no new time after a wake that completed, at the limit, or to a hidden agent", async () => {
+    const completed = harness();
+    const first = await woken(completed);
+    endWake(completed, "wake-1", "completed");
+    expect(first.wakes.nextDueAt()).toBeNull();
+
+    const capped = harness();
+    const second = await woken(capped);
+    endWake(capped, "wake-1", "failed");
+    capped.db
+      .prepare("UPDATE fork_agent_wait_timers SET time_wakes = ? WHERE wait_id = ?")
+      .run(TIME_WAKES_MAX, second.waitId);
+    expect(second.wakes.nextDueAt()).toBeNull();
+
+    const hidden = harness();
+    const third = await woken(hidden);
+    endWake(hidden, "wake-1", "interrupted");
+    hidden.setHidden(true);
+    expect(third.wakes.nextDueAt()).toBeNull();
+    await Effect.runPromise(third.wakes.processDue(new Date(START.getTime() + 40 * MINUTE), () => true));
+    expect(hidden.store.get(AGENT, third.waitId)?.wakeAt).toBeNull();
+  });
+});
+
 describe("waits in side threads", () => {
   const TASK = { inExecutionThread: true, inTaskThread: true };
 

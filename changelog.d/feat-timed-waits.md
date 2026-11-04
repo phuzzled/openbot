@@ -8,3 +8,5 @@
   script event does.
   The time of one wait wakes it at most 20 times; then the agent reports to you and closes it.
   An agent can also set a time to check back from a task, and the wake then runs in that task.
+  When a check-back is cut off by a restart, a provider error or a Stop, OpenBot tries it again a few
+  minutes later, so the follow-up is not lost.

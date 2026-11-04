@@ -1145,7 +1145,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         executionThreads: () => [...this.channels.store.executionThreads(), ...this.messaging.store.executionThreads()],
         taskThreads: () => this.#tasks.executionThreads(),
         deliveryThreadId: (deliveryId) => this.#deliveryThreadId(deliveryId),
-        deliverySettled: (deliveryId, terminal) => this.messaging.deliverySettled(deliveryId, terminal),
+        deliverySettled: (deliveryId, terminal) => {
+          this.messaging.deliverySettled(deliveryId, terminal);
+          // A wake of timed waits that the restart cut off gets a new time (`TimedWaitWakes`).
+          if (terminal !== "completed") this.#routineTimer.arm();
+        },
         hasOpenWait: (agentId, deliveryIds) => turnLeavesWaitOpen(this.#waits.list(agentId).waits, deliveryIds),
       },
     });
@@ -1545,6 +1549,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         turnStopped: (agentId, taskId, turnId) =>
           this.#stoppedTurn(agentId, taskId) === turnId || (taskId === null && this.#requestedNewChats.has(agentId)),
         hasOpenWait: (agentId, deliveryIds) => turnLeavesWaitOpen(this.#waits.list(agentId).waits, deliveryIds),
+        waitWakeEnded: () => this.#routineTimer.arm(),
         routineAnswered: (agentId, deliveryId, answer) => {
           const agent = this.#store.list().find((item) => item.id === agentId);
           const run = this.#routines.runForDelivery(deliveryId);

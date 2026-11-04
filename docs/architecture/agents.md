@@ -138,6 +138,10 @@ missed while the app was closed fires once at the first pass. A wait that a pend
 continues loses its time and gets no second wake. `fork_agent_wait_timers.time_wakes`
 counts the wakes of the time. A wait with a time, or with `time_wakes` above 0, is timed:
 `AgentWaitStore.forRoutineRun` leaves it out, unless its `routine_id` is the routine of the run.
+A wake whose delivery ends failed, interrupted or cancelled leaves the wait with no time. The next
+pass of `TimedWaitWakes` gives it a time again (5 minutes, doubled for each time wake, at most 80
+minutes), until `TIME_WAKES_MAX`. The turn end (`waitWakeEnded`) and the restart recovery arm the
+shared timer for that pass.
 
 A routine run (in its thread, or in the agent's own chat) does not resume a provider session.
 `DrainScheduler.startDelivery` starts a new session for each run with
