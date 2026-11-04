@@ -47,6 +47,7 @@ import type { AttentionBrowserHost, AttentionRegistry } from "./attention-regist
 import type { BrowserUploadTarget } from "./browser-uploads";
 import { type ContextCompaction, compactsOnRequest } from "./context-compaction";
 import type { ConversationRuntime } from "./conversation-runtime";
+import { isWaitWakeDelivery } from "./delivery-content";
 import type { DeltaBuffer } from "./delta-buffer";
 import type { FailureContext, FailureSignal } from "./failure-signal";
 import { readCapturedSteps } from "./handoff-tool-steps";
@@ -1256,10 +1257,13 @@ export class TurnLifecycle {
             taskId: laneTaskId,
             deliveryIds: deliveries.map(({ delivery }) => delivery.id),
             plan: snapshot.messages.find((message) => message.id === `${turnId}:plan`)?.plan ?? null,
-            earlierPlan:
-              snapshot.messages.findLast(
-                (message) => message.itemType === CONVERSATION_PLAN_ITEM_TYPE && message.turnId !== turnId,
-              )?.plan ?? null,
+            // A wake of timed waits continues the request that the wait served, so the steps that were
+            // open when the wait opened are that request's steps, not earlier work.
+            earlierPlan: deliveries.some(({ delivery }) => isWaitWakeDelivery(delivery))
+              ? null
+              : (snapshot.messages.findLast(
+                  (message) => message.itemType === CONVERSATION_PLAN_ITEM_TYPE && message.turnId !== turnId,
+                )?.plan ?? null),
             answer: latestAssistant?.text,
           })
         : null;
