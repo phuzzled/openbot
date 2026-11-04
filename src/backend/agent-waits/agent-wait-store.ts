@@ -199,6 +199,21 @@ export class AgentWaitStore {
   }
 
   /**
+   * The waits of no routine that a wake time woke, that have no wake time now, and that name the
+   * delivery of that wake. `TimedWaitWakes` gives one a time again when its wake did not complete.
+   */
+  spentTimeWakes(): AgentWait[] {
+    return databaseRows(
+      this.#database.connection
+        .prepare(
+          `${WAIT_SELECT} WHERE t.wake_at IS NULL AND t.time_wakes > 0 AND w.routine_id IS NULL
+           AND w.wake_delivery_id IS NOT NULL ORDER BY w.created_at, w.wait_id`,
+        )
+        .all(),
+    ).map(toWait);
+  }
+
+  /**
    * Marks the waits that their wake time woke, clears that time and counts the wake in the same
    * statement, so a wait wakes once for each time it is given.
    */

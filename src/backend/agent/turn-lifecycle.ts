@@ -199,6 +199,11 @@ export interface TurnHooks {
   turnStopped(agentId: string, taskId: string | null, turnId: string): boolean;
   /** Whether the agent has an open wait that one of these deliveries opened, or woke and left open. */
   hasOpenWait(agentId: string, deliveryIds: readonly string[]): boolean;
+  /**
+   * A turn that served the wake of timed waits ended. A wake that did not complete gets a new time
+   * (`TimedWaitWakes`), so the shared timer derives its next fire again.
+   */
+  waitWakeEnded(agentId: string): void;
   /** Ends the provider session of a routine run. Nothing for any other session, or a second time. */
   closeRoutineSession(externalThreadId: string): Effect.Effect<void>;
   /** Gives the answer of a routine run in its own session to the session of the agent's chat. */
@@ -1304,6 +1309,8 @@ export class TurnLifecycle {
           yield* this.#mailbox.markTerminal(delivery.delivery.id, terminal, reason).pipe(toTurnOperationFailed);
           this.#mailboxSync.syncDeliveryMessage(snapshot, delivery.delivery.id);
         }
+        if (!continuation && deliveries.some(({ delivery }) => isWaitWakeDelivery(delivery)))
+          this.#hooks.waitWakeEnded(agentId);
         // A turn can start with the answers of several teammates. `#relayAgentResult` skips each one
         // that wants no answer, so only a teammate that asked for a result gets one.
         if (
@@ -1448,6 +1455,7 @@ export class TurnLifecycle {
         .markTerminal(delivery.id, terminal, null)
         .pipe(toTurnOperationFailed, Effect.catchCause(report));
     }
+    if (deliveries.some(({ delivery }) => isWaitWakeDelivery(delivery))) this.#hooks.waitWakeEnded(agentId);
     const owner = this.#conversation.snapshotWithTurn(agentId, turnId);
     yield* turnStep(() => {
       // With no open delivery and no snapshot on the turn, the turn is still open only when the normal

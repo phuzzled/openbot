@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import type { MailboxStore } from "../mailbox-store";
 import type { RoutineDueSource } from "../routine-timer";
 import type { AgentWaitStore } from "./agent-wait-store";
+import { TIME_WAKES_MAX } from "./agent-waits";
 
 export interface TimedWaitWakesHooks {
   /**
@@ -35,6 +36,8 @@ export interface TimedWaitWakesHooks {
 
 /** A wake that could not be queued tries again after this time, not at once: the timer would spin. */
 const RETRY_MS = 5 * 60_000;
+/** The longest delay before a wake that did not complete wakes again. */
+const REWAKE_MAX_MS = 80 * 60_000;
 
 export interface TimedWaitWakesOptions {
   store: AgentWaitStore;
@@ -53,6 +56,13 @@ export interface TimedWaitWakesOptions {
  * request and note (`wokenWaitsPromptText`). The lane is the agent's own chat, or the open task whose
  * thread opened the wait.
  *
+ * A wake whose delivery ended failed, interrupted or cancelled (a restart, a provider error, a Stop)
+ * did not continue the request, and the wait has no time left. The next pass gives it a time again,
+ * 5 minutes ahead and doubled for each time wake up to 80 minutes, so the follow-up is not lost. Each
+ * wake counts against `TIME_WAKES_MAX`, and a wait at the limit gets no new time. A wake that completed
+ * is final: the agent closed the wait, set a new time, or chose to leave it open. The owner of the turn
+ * end arms the shared timer when a wake ends (`wakeEnded`), so the pass runs at once.
+ *
  * It never imports the agent service facade.
  */
 export class TimedWaitWakes implements RoutineDueSource {
@@ -67,7 +77,18 @@ export class TimedWaitWakes implements RoutineDueSource {
   }
 
   nextDueAt(): string | null {
+    // A wake that did not complete gets its new time at the next pass, which is now.
+    if (this.#unfinishedWakes().length > 0) return new Date().toISOString();
     return this.#store.timed().find((wait) => this.#hooks.mayWake(wait.agentId))?.wakeAt ?? null;
+  }
+
+  /** The spent waits whose last wake did not complete, of agents that can take a wake, under the limit. */
+  #unfinishedWakes(): AgentWait[] {
+    return this.#store.spentTimeWakes().filter((wait) => {
+      if ((wait.timeWakes ?? 0) >= TIME_WAKES_MAX || !this.#hooks.mayWake(wait.agentId)) return false;
+      const status = wait.wakeDeliveryId ? this.#mailbox.getDelivery(wait.wakeDeliveryId)?.delivery.status : undefined;
+      return status === "failed" || status === "interrupted" || status === "cancelled";
+    });
   }
 
   readonly processDue = Effect.fn("TimedWaitWakes.processDue")(function* (
@@ -76,6 +97,11 @@ export class TimedWaitWakes implements RoutineDueSource {
     active: () => boolean,
   ) {
     const nowText = now.toISOString();
+    for (const wait of this.#unfinishedWakes()) {
+      const delay = Math.min(RETRY_MS * 2 ** Math.max(0, (wait.timeWakes ?? 1) - 1), REWAKE_MAX_MS);
+      this.#store.setWakeAt(wait.agentId, [wait.id], new Date(now.getTime() + delay).toISOString());
+      this.#hooks.changed(wait.agentId);
+    }
     const dueByLane = new Map<string, { agentId: string; taskId: string | null; due: AgentWait[] }>();
     for (const wait of this.#store.timed()) {
       if (!wait.wakeAt || wait.wakeAt > nowText || !this.#hooks.mayWake(wait.agentId)) continue;
