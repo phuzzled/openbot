@@ -15,6 +15,7 @@ import { causeHelpers } from "../effect-boundary";
 import type { DeliveryContext, MailboxStore } from "../mailbox-store";
 import type { MessagingThreads } from "../messaging/messaging-threads";
 import { decodeTurnResponse } from "../protocol";
+import { CHECK_IN_CODEX_APPROVAL, CHECK_IN_CODEX_SANDBOX, CheckInTurns } from "../stall-sweep/check-in-turns";
 import type { ContextCompaction } from "./context-compaction";
 import type { ConversationRuntime } from "./conversation-runtime";
 import {
@@ -23,6 +24,7 @@ import {
   combinedPromptInput,
   deliveryPromptInput,
   deliveryWakesWaits,
+  isStallNudgeDelivery,
   ROUTINE_CONTINUATION_RESULT_NOTE,
 } from "./delivery-content";
 import type { DuplicationGate } from "./duplication-gate";
@@ -213,6 +215,8 @@ export class DrainScheduler {
   readonly #startingDeliveries = new Map<AgentProvider, number>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Deferred.Deferred<void, DeliveryStartFailed>>();
+  /** The provider threads that run a check-in turn (a stall nudge). `OpenBotToolRouter` reads it. */
+  readonly checkIn = new CheckInTurns();
 
   constructor(options: DrainSchedulerOptions) {
     this.#store = options.store;
@@ -865,12 +869,16 @@ export class DrainScheduler {
       }
       this.#conversation.emitConversation(snapshot);
 
+      // A stall nudge is a check-in turn: it cannot act (`stall-sweep/check-in-turns.ts`). Its plan
+      // does not continue, so a continuation never runs with no restriction.
+      const checkIn = planNote === undefined && isStallNudgeDelivery(delivery);
       const startTurn = (providerThreadId: string) =>
         Effect.gen({ self: this }, function* () {
           // Read again here, not only above: the provider, the thread and the channel are prepared in
           // between, and an endpoint removed during that wait finds the process still running. The
           // retry below calls this as well, so the recovered thread is checked too.
           yield* drainStep(requireServedModel);
+          this.checkIn.mark(providerThreadId, checkIn);
           return yield* this.#threads
             .requestWithArchivedThreadRecovery(
               agent,
@@ -895,8 +903,9 @@ export class DrainScheduler {
                 input: inputForThread(providerThreadId),
                 cwd: agent.workspacePath,
                 runtimeWorkspaceRoots: workspaceWritableRoots(agent, this.#store.sharedRoot),
-                approvalPolicy: "on-request",
-                sandboxPolicy: codexSandboxPolicy(agent, this.#store.sharedRoot),
+                approvalPolicy: checkIn ? CHECK_IN_CODEX_APPROVAL : "on-request",
+                sandboxPolicy: checkIn ? CHECK_IN_CODEX_SANDBOX : codexSandboxPolicy(agent, this.#store.sharedRoot),
+                ...(checkIn ? { checkInOnly: true } : {}),
                 ...(client.provider === "codex"
                   ? codexServiceTier(
                       this.#store.list().find((current) => current.id === agent.id) ?? agent,

@@ -56,8 +56,15 @@ import {
   routineReportFailureToolSchema,
   sendToChannelToolSchema,
 } from "../openbot-tools";
-import { type AppServerRequest, type DynamicToolCallParams, type DynamicToolResult, isRecord } from "../protocol";
+import {
+  type AppServerRequest,
+  type DynamicToolCallParams,
+  type DynamicToolResult,
+  getString,
+  isRecord,
+} from "../protocol";
 import { handleRoutineFlowTool, type RoutineFlowTools } from "../routine-flows/routine-flow-tools";
+import { CHECK_IN_REFUSAL, checkInAllowsOpenBotTool } from "../stall-sweep/check-in-turns";
 import type { StoredStateFailure } from "../stored-state-effects";
 import { AgentInterruptTool } from "./agent-interrupt-tool";
 import type { AgentMemories } from "./agent-memories";
@@ -327,6 +334,12 @@ export class OpenBotToolRouter {
         this.#hooks.emitError("server_request_failed", error);
       });
     return yield* Effect.gen({ self: this }, function* () {
+      // A check-in turn (a stall nudge) cannot act: OpenBot declines each approval and consent request
+      // of the turn, and refuses each tool that is not in `CHECK_IN_OPENBOT_TOOLS` (`check-in-turns.ts`).
+      const checkIn = this.#drain.checkIn.has(
+        getString(request.params, "threadId") ?? getString(request.params, "conversationId"),
+      );
+      if (checkIn && this.#attention.declineForCheckIn(client, request)) return;
       switch (request.method) {
         case "item/commandExecution/requestApproval":
           this.#attention.surfaceApproval(client, request, "command");
@@ -399,6 +412,10 @@ export class OpenBotToolRouter {
                   ? result
                   : openBotToolFailure(sourceText("error.agent.historyUnavailable")),
               );
+            return;
+          }
+          if (checkIn && !checkInAllowsOpenBotTool(params.namespace, params.tool)) {
+            client.respond(request.id, openBotToolFailure(CHECK_IN_REFUSAL));
             return;
           }
           // Keep the transport identifiers and abort signal; enter the original dispatch below.

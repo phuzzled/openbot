@@ -21,6 +21,13 @@
 //        continuation and no check.
 //   S16  A status question while the timed wait of the first request is open: no nudge.
 //   S17  A busy lane at the due time: the check is put off, and the nudge comes when the lane is free.
+//   S18  A nudge turn is a check-in only: its read-only sandbox and "untrusted" approvals reach Codex,
+//        OpenBot refuses its send_message and execute_data calls, and declines its command approval.
+//        It can still open a wait.
+//   S19  "Please review and approve." with an open "Send the email" step: no plan continuation, no
+//        check and no nudge.
+//   S20  "Tomorrow I'll pay the supplier.": the check is due after tomorrow 09:00 local, not in 15
+//        minutes, and no nudge comes before then.
 // No provider, account or network is used. `bun run test:stall-sweep`. `ONLY=S1,S5` runs some.
 // Writes .openbot-build/stall-sweep-e2e/report.json.
 import assert from "node:assert/strict";
@@ -110,6 +117,11 @@ const callNext = (turn) => {
   const call = turn.calls.shift();
   if (!call) return timers.set(turn.turnId, setTimeout(() => finish(turn), turn.script.delayMs || 5));
   const id = "tool-" + turn.turnId + "-" + turn.calls.length;
+  if (call.tool === "$approval") {
+    // A command that asks for approval, as Codex asks with the "untrusted" policy.
+    waiting.set(id, turn);
+    return write({ id, method: "item/commandExecution/requestApproval", params: { threadId: turn.threadId, turnId: turn.turnId, itemId: "cmd-" + id, command: call.arguments.command, cwd: "/tmp", reason: null } });
+  }
   const waitMatch = /Wait ID: (\\S+)/.exec(turn.text || "");
   for (const key of Object.keys(call.arguments)) if (call.arguments[key] === "$WAIT") call.arguments[key] = waitMatch ? waitMatch[1] : "missing";
   waiting.set(id, turn);
@@ -152,7 +164,7 @@ const answer = (message) => {
         scripts.set(params.threadId, named ? JSON.parse(named[1]) : []);
       }
       const script = (scripts.get(params.threadId) || []).shift() || { steps: [] };
-      log({ method: "turn", threadId: params.threadId, turnId, note, text });
+      log({ method: "turn", threadId: params.threadId, turnId, note, text, approvalPolicy: params.approvalPolicy, sandboxPolicy: params.sandboxPolicy });
       const turn = { threadId: params.threadId, turnId, script, text, calls: (script.calls || []).map((c) => ({ ...c, arguments: { ...c.arguments } })) };
       if (script.planEarly) setTimeout(() => write({ method: "turn/plan/updated", params: { threadId: params.threadId, turnId, plan: (script.steps || []).map(([step, status]) => ({ step, status })) } }), 50);
       return callNext(turn);
@@ -180,7 +192,7 @@ process.stdin.on("data", (chunk) => {
       else if (!message.method && waiting.has(message.id)) {
         const turn = waiting.get(message.id);
         waiting.delete(message.id);
-        log({ method: "toolResult", result: message.result });
+        log({ method: "toolResult", turnId: turn.turnId, result: message.result });
         callNext(turn);
       }
     }
@@ -240,6 +252,9 @@ interface LoggedTurn {
   turnId: string;
   note: boolean;
   text: string;
+  approvalPolicy?: unknown;
+  sandboxPolicy?: unknown;
+  result?: unknown;
 }
 
 function loggedEntries(): LoggedTurn[] {
@@ -926,6 +941,114 @@ try {
     await fireAndSettle(agent.id, mark, 1);
     assert.equal(nudgeTurns(mark).length, 1, "the nudge comes when the lane is free");
     return { duringBusy: duringBusy.length, nudges: nudgeTurns(mark).length };
+  });
+
+  // S18: a nudge turn is a check-in only. Codex gets a read-only sandbox and "untrusted" approvals, and
+  // OpenBot refuses each tool that acts and declines each approval of the turn.
+  await probe("S18 a nudge turn cannot act: its send and write calls are refused", async () => {
+    const agent = await createAgent("Restricted");
+    const target = await createAgent("Bystander");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `${REQUEST} ${plan(promiseTurn)} ${nudges([
+        {
+          steps: [],
+          calls: [
+            {
+              tool: "send_message",
+              arguments: { recipientAgentIds: [target.id], text: "Please pay the supplier now.", expectsReply: false },
+            },
+            { tool: "execute_data", arguments: { sql: "DELETE FROM quotes" } },
+            { tool: "$approval", arguments: { command: "curl -X POST https://example.com/pay" } },
+            { tool: "await_event", arguments: { note: "Check vendor replies.", wakeAfterMinutes: 120 } },
+          ],
+          answer: "I could not act in this turn. I opened a wait for the vendor replies.",
+        },
+      ])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    const userTurnLog = turnsSince(mark).find((turn) => !turn.text.includes(NUDGE_HEADER));
+    assert.equal(userTurnLog?.approvalPolicy, "on-request", "a user turn keeps its approval policy");
+    await fireAndSettle(agent.id, mark, 1);
+    const [nudge] = nudgeTurns(mark);
+    assert.ok(nudge, "the nudge turn ran");
+    assert.ok(nudge.text.includes("This turn is a check-in only. You cannot act in it."), "the nudge says so");
+    assert.deepEqual(nudge.sandboxPolicy, { type: "readOnly", networkAccess: false }, "read-only sandbox");
+    assert.equal(nudge.approvalPolicy, "untrusted", "every command that is not known safe asks");
+    const results = loggedEntries().filter((entry) => entry.method === "toolResult" && entry.turnId === nudge.turnId);
+    assert.equal(results.length, 4, "the fake got 4 answers");
+    const [sendResult, dataResult, approval, wait] = results.map((entry) => JSON.stringify(entry.result));
+    assert.ok(sendResult?.includes("This turn is a check-in only"), `send_message is refused: ${sendResult}`);
+    assert.ok(dataResult?.includes("This turn is a check-in only"), `execute_data is refused: ${dataResult}`);
+    assert.ok(approval?.includes('"decline"'), `the command approval is declined: ${approval}`);
+    assert.ok(!wait?.includes("check-in only"), "await_event is allowed");
+    assert.equal(
+      current.service
+        .listQueue(target.id)
+        .deliveries.filter((delivery) => delivery.sender.kind === "agent" && delivery.sender.agentId === agent.id)
+        .length,
+      0,
+      "the bystander got no message",
+    );
+    assert.equal(current.service.listWaits(agent.id).waits.length, 1, "the nudge turn opened a wait");
+    // The next turn of the user runs with its normal policies again.
+    const next = await send(agent.id, `Thanks. ${plan({ steps: [], answer: "OK." })}`);
+    assert.equal(await settled(next), "completed");
+    const after = turnsSince(mark).at(-1);
+    assert.equal(after?.approvalPolicy, "on-request", "the next turn is not restricted");
+    return { sandbox: nudge.sandboxPolicy, approvalPolicy: nudge.approvalPolicy, refused: 2, declined: 1 };
+  });
+
+  // S19: review 6, R1. A draft that waits for approval, with an open send step.
+  await probe("S19 a draft that waits for approval with an open send step: no continuation, no nudge", async () => {
+    const agent = await createAgent("Reviewer");
+    const mark = loggedTurns().length;
+    const turn: FakeTurn = {
+      steps: [
+        ["Draft the email to the board", "completed"],
+        ["Send the email to the board", "pending"],
+      ],
+      answer: "Here's the draft email to the board. Please review and approve.",
+    };
+    const id = await send(
+      agent.id,
+      `Draft an email to the board about the budget. ${plan(turn, { ...turn, answer: "SENT (must not happen)" })} ${nudges([{ steps: [], answer: "NOT REACHED" }])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    await sleep(500);
+    const continuationTurns = turnsSince(mark).filter((entry) => entry.note).length;
+    assert.equal(continuationTurns, 0, "no plan continuation");
+    assert.equal(continuationLines(agent.id).length, 0);
+    assert.deepEqual(checks(agent.id), [], "no check");
+    await fireAndSettle(agent.id, mark, 0);
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge");
+    return { continuationTurns, checks: 0, nudges: 0 };
+  });
+
+  // S20: review 6, R3. A promise for tomorrow is checked after tomorrow, not in 15 minutes.
+  await probe("S20 a promise for tomorrow: no nudge before tomorrow", async () => {
+    const agent = await createAgent("Payer");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `Check the supplier invoice. ${plan({ steps: [], answer: "Invoice checked. Tomorrow I'll pay the supplier." })} ${nudges([{ steps: [], answer: "Waiting for tomorrow." }])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    const [check] = checks(agent.id);
+    assert.ok(check?.dueAt, "the promise has a check");
+    const tomorrowNine = new Date(Date.parse(check.createdAt));
+    tomorrowNine.setDate(tomorrowNine.getDate() + 1);
+    tomorrowNine.setHours(9, 0, 0, 0);
+    assert.ok(
+      Date.parse(check.dueAt) >= tomorrowNine.getTime() + 15 * 60_000,
+      `due after tomorrow 09:15: ${check.dueAt}`,
+    );
+    await arm();
+    await sleep(800);
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge before tomorrow");
+    assert.equal(checks(agent.id).length, 1, "the check waits");
+    return { dueAt: check.dueAt, nudges: 0 };
   });
 
   report.checks.push(...results.map((r) => ({ name: r.name, passed: r.ok, detail: r.detail })));

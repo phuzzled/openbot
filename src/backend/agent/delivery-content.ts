@@ -197,8 +197,8 @@ export function cutStallRequest(text: string): string {
 
 /**
  * The text of a stall nudge: the reason, what to do, and the request, so a compacted context still
- * knows it. Its first instruction stops an agent that waits for the user, so a nudge never pushes an
- * unapproved action. `nudge` and `limit` count the nudges of the request. A long request is cut.
+ * knows it. A nudge turn is a check-in only (`stall-sweep/check-in-turns.ts`): the provider refuses
+ * every tool that acts, so a nudge cannot push an unapproved action. The text says so. `nudge` and `limit` count the nudges of the request. A long request is cut.
  */
 export function stallNudgeText(input: { reason: string; requestText: string; nudge: number; limit: number }): string {
   const requestText = cutStallRequest(input.requestText);
@@ -206,11 +206,13 @@ export function stallNudgeText(input: { reason: string; requestText: string; nud
     STALL_NUDGE_HEADER,
     "This is not a message from the user or from a teammate.",
     `Reason: ${input.reason}`,
+    "This turn is a check-in only. You cannot act in it. Report status, open a wait, make a routine, or ask the user. OpenBot refuses every other tool call of this turn.",
     'First: if you wait for the user\'s answer or approval, say so in one line ("I am waiting for your answer.") and stop. Do nothing more.',
-    "Never do an action that the user did not approve, such as a send, a booking, a payment, a deploy or a delete.",
+    "Do not try a send, a booking, a payment, a deploy, a delete or any other action in this turn.",
     "Only if you do not wait for the user, do one of these now:",
-    "- Finish the work that the user asked for and approved.",
-    `- Open a wait with openbot.${AWAIT_EVENT_TOOL} and wakeAfterMinutes for the thing that you wait for.`,
+    "- Tell the user the state of the work in a few lines.",
+    `- Open a wait with openbot.${AWAIT_EVENT_TOOL} and wakeAfterMinutes for the thing that you wait for. If you said that you would do something at a later time, give that time.`,
+    "- Make or change a routine with openbot.create_routine or openbot.update_routine for repeated work.",
     "- Ask the user with openbot.ask_user if only the user can unblock it.",
     "- If the work is done, mark the plan steps completed, report it to the user and say that it is done.",
     `This is check ${input.nudge} of ${input.limit}. After the last check, OpenBot tells the user that the work stopped.`,

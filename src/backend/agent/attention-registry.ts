@@ -58,6 +58,7 @@ import {
   getString,
   type RequestId,
 } from "../protocol";
+import { CHECK_IN_REFUSAL } from "../stall-sweep/check-in-turns";
 import type { VaultAgentChange, VaultAgentResult, VaultEnteredItem, VaultItems } from "../vault-items";
 import { type ApprovalAutomationPolicy, NO_APPROVAL_AUTOMATION, shouldAutoApprove } from "./approval-automation";
 import type { ConversationRuntime } from "./conversation-runtime";
@@ -993,6 +994,28 @@ export class AttentionRegistry {
     this.#routines.markNeedsAttention(prepared.approval.turnId);
     this.#emit({ type: "approval", approval: prepared.approval });
   }, Effect.uninterruptible).bind(this);
+
+  /**
+   * Declines, with no card, an approval, permission or MCP consent request of a check-in turn (a stall
+   * nudge, `stall-sweep/check-in-turns.ts`), and reports whether the request was one. A check-in turn
+   * cannot act, also for an agent with Full access. A question to the user is not declined.
+   */
+  declineForCheckIn(client: AgentClient, request: AppServerRequest): boolean {
+    switch (request.method) {
+      case "item/commandExecution/requestApproval":
+      case "item/fileChange/requestApproval":
+      case "item/permissions/requestApproval":
+      case "applyPatchApproval":
+      case "execCommandApproval":
+        client.respond(request.id, approvalReply(request.method, request.params, "decline", CHECK_IN_REFUSAL));
+        return true;
+      case "mcpServer/elicitation/request":
+        client.respond(request.id, { action: "decline", content: null, _meta: null });
+        return true;
+      default:
+        return false;
+    }
+  }
 
   surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "conversationId");
