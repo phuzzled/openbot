@@ -9,7 +9,7 @@ import type { OpenBotToolResponse } from "../agent/routine-tools";
 import type { DeliveryContext } from "../mailbox-store";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import { AgentWaitStore } from "./agent-wait-store";
-import { AgentWaits, AWAIT_EVENT_TOOL, awaitEventToolSchema } from "./agent-waits";
+import { AgentWaits, AWAIT_EVENT_TOOL, awaitEventToolSchema, turnLeavesWaitOpen } from "./agent-waits";
 import { TimedWaitWakes } from "./timed-wait-wakes";
 
 const AGENT = "agent-1";
@@ -273,6 +273,23 @@ describe("timed wait wakes", () => {
     const kept = test.call({ note: "Check again" }, "turn-2");
     expect(kept.success).toBe(true);
     expect(String(kept.value.note)).toContain("wakeAfterMinutes");
+  });
+
+  it("counts a wake turn that leaves its wait open as a turn that waits, so its plan does not continue", async () => {
+    const test = harness();
+    test.call({ note: "Check the deploy", wakeAfterMinutes: 30 });
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    test.setNow(due);
+    await Effect.runPromise(test.wakes().processDue(due, () => true));
+    // The turn of the original request, and the wake turn that rescheduled the wait.
+    expect(turnLeavesWaitOpen(test.store.list(AGENT), ["request-1"])).toBe(true);
+    test.turns.set("turn-2", [test.deliveries.get("wake-1") ?? delivery("wake-1")]);
+    expect(test.call({ note: "Check again", wakeAfterMinutes: 60 }, "turn-2").success).toBe(true);
+    expect(turnLeavesWaitOpen(test.store.list(AGENT), ["wake-1"])).toBe(true);
+    // Another turn does not wait for it, and a closed wait holds no turn.
+    expect(turnLeavesWaitOpen(test.store.list(AGENT), ["user-2"])).toBe(false);
+    test.store.delete(AGENT, test.store.list(AGENT)[0]?.id ?? "");
+    expect(turnLeavesWaitOpen(test.store.list(AGENT), ["wake-1"])).toBe(false);
   });
 });
 

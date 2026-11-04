@@ -203,7 +203,7 @@ export interface TurnHooks {
   ): Effect.Effect<void>;
   /** Whether the user stopped this turn, in the agent's own chat (`taskId` null) or in a task. */
   turnStopped(agentId: string, taskId: string | null, turnId: string): boolean;
-  /** Whether the agent has an open wait for one of these deliveries. */
+  /** Whether the agent has an open wait that one of these deliveries opened, or woke and left open. */
   hasOpenWait(agentId: string, deliveryIds: readonly string[]): boolean;
   /** Ends the provider session of a routine run. Nothing for any other session, or a second time. */
   closeRoutineSession(externalThreadId: string): Effect.Effect<void>;
