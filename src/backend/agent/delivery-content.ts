@@ -353,6 +353,13 @@ export function planContinuationPrompt(
   ].join("\n");
 }
 
+/**
+ * Added to the continuation note of a routine run in its own session: only the last answer of the run
+ * goes into the agent's own chat (the routine digest), so that answer must hold the whole result.
+ */
+export const ROUTINE_CONTINUATION_RESULT_NOTE =
+  "This is a routine run: only the answer of its last turn goes to your own chat as the result of the run. Give the whole result in that answer, also what you found in the earlier turns.";
+
 /** The note for a turn that ended before the next step: it named the step, or asked whether to continue. */
 export function nextStepContinuationPrompt(count: number, limit: number): string {
   return [
