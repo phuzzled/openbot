@@ -152,24 +152,25 @@ not sure, it finds no stall. `answerWaitsOnUser` is also the rule of the plan co
 (`TurnLifecycle.#planContinues`): an answer whose last part asks the user a question that is not only
 whether to continue, says "Let me know what you think" or "Ready when you are", waits on an approval
 or on a named person ("Once Andrew replies", "Once Sam signs"), or offers a choice, does not continue
-and gets no open-steps check. The detection is only a hint for when to check in. Safety comes from
-code, in two gates. First, the plan continuation gate (`stall-sweep/continuation-gate.ts`, called by
-`PlanContinuation.consider` and `restore`, so it covers a continuation after a user turn, a wake, a
-routine run and a restart): a continuation does not run when the answer asks the user anything
-(other than only "Shall I continue?") or names an approval, a confirmation, a go-ahead, a green light,
-a sign-off or a review in any form, or when a next open step (each step in progress and the first
-pending step) is an outward action (send, email, message, post, publish, pay, transfer, buy, book,
-order, deploy, release, ship, merge, push, delete, remove, cancel, sign, submit, call or contact
-someone, and their forms) that the user's own message of the request does not name as a verb. A verb
-of the same group counts ("Email the board" allows "Send the email"), a noun or a negation does not
-("Draft an email", "Don't send it yet"). With no message of the user (a wake, a task brief, a routine
-run), an outward step always stops the chain. A nudge turn does not continue its plan. Second, a
-nudge turn is a check-in only (below). Then `StallCheckStore` keeps one check for the lane in the fork table
+and gets no open-steps check. The detection is only a hint for when to check in. Safety does not
+come from English word lists. It comes from (1) the code lock on a nudge turn, which is a check-in
+only (below), and (2) the agent's own permission and approval settings, which apply to every other
+turn. The plan continuation has no word-list gate: it continues as upstream does, and its note
+(`planContinuationPrompt`, `nextStepContinuationPrompt`) says "Before a step that sends, pays, books,
+deploys, deletes or contacts someone, and that the user did not ask for, ask the user first." A nudge
+turn never continues its plan: `TurnLifecycle.#planContinues` stops it, `BootRecovery.#restorePlan`
+does not restore it after a restart, and `DrainScheduler` marks every turn of a nudge delivery as a
+check-in, also a continuation. Then `StallCheckStore` keeps one check for the lane in the fork table
 `fork_stall_checks`, due 15 minutes later, with the request cut to 2,000 characters. A promise that
-names a time (`promise-time.ts`: "tomorrow" 09:00, "tonight" 20:00, "later today" 3 hours, a weekday
-09:00, "in N minutes/hours/days", a clock time; another time word such as "on the 14th" gets 09:00
-tomorrow) is due 15 minutes after that local time, and its 24-hour age limit counts from that time
-(`stallCheckAgeFrom`, read again from the stored reason). A newer turn of
+names a time (`promise-time.ts`: "tomorrow" 09:00, or today 09:00 when said before 05:00; "tonight"
+20:00, "later today" 3 hours, a weekday 09:00, "in N minutes/hours/days", a clock time, where "at
+3:30" with no am or pm that is past this morning is 15:30 when that is ahead; "on the 20th", "next
+month", "in March" or an ISO date gets 09:00 of that day) is due 15 minutes after that local time, and
+its 24-hour age limit counts from that time (`stallCheckAgeFrom`, read again from the stored reason).
+A promise with a time word that `promise-time.ts` does not read ("end of week", "this week", "next
+quarter", a date that is past) gets no check: a nudge before the named time would be wrong. Not
+handled: a time zone ("at 9am PT"), a weekday said on that day (next week), "by Friday" (the nudge
+comes on Friday), "tonight" said after 20:00 (now). A newer turn of
 the lane that is not a stall ends the check; a plan continuation of the same request holds it. A turn
 for a teammate's message, or with no delivery, keeps the check of another request. `StallSweep` is
 one more source of the shared `RoutineTimer`. At the due time, a check older than 24 hours
@@ -181,24 +182,27 @@ the check's time) cancels it. So a status question while the timed wait of the f
 gets no nudge, and a wait that wakes days later does not turn the sweep off for the lane. An older
 wait of other work with no time, as one that a Stop left, does not. A hidden agent keeps its check until it shows (`mayWake`), and with
 no ready provider the check waits 15 minutes. An agent whose provider OpenBot cannot restrict to a
-check-in (`checkInRestricts`) gets no nudge: the check ends with the `stall-alert` line. Otherwise one nudge goes to the lane, as the wake of
+check-in (`checkInRestricts`, or for Codex `AgentService.#checkInRestricts`) gets no nudge: the check ends with the `stall-alert` line. Otherwise one nudge goes to the lane, as the wake of
 timed waits does (`#enqueueWaitWake`, key `stall-nudge:<checkId>:<n>`). Its text starts with
 `STALL_NUDGE_HEADER` (`isStallNudgeDelivery`), so `deliveryPromptInput` sends it as is: the reason,
 the line "This turn is a check-in only. You cannot act in it.", the instruction to say so in one line
-and stop if the agent waits for the user, the ways to end the stall (report, wait, routine, ask), and
-the request.
+and stop if the agent waits for the user, the ways to end the stall (report, wait, ask), and the
+request. The nudge does not suggest a routine.
 
 A nudge turn is a check-in turn (`stall-sweep/check-in-turns.ts`). `DrainScheduler` marks its
 provider thread in `CheckInTurns` when the turn starts (each other turn clears the mark), and sends
 `checkInOnly: true`. `OpenBotToolRouter` refuses each OpenBot tool of a marked thread that is not in
-`CHECK_IN_OPENBOT_TOOLS` (waits, routine create and update, `ask_user`, `ask_ui`, reads), and every
-browser tool, and `AttentionRegistry.declineForCheckIn` declines each approval, permission and MCP
+`CHECK_IN_OPENBOT_TOOLS` (the agent's own waits, `ask_user`, `ask_ui`, reads), and every
+browser tool. It refuses `create_routine`, `update_routine` and every other tool that makes or changes
+something that runs later or elsewhere, because a routine runs later as a normal turn with no
+restriction. It refuses `acknowledge_request` (its timeout presses start), and `close_wait` for a wait
+of another agent. And `AttentionRegistry.declineForCheckIn` declines each approval, permission and MCP
 consent request of the thread with no card, also for an agent with Full access. Per provider:
 
 | Provider | How a check-in turn is restricted |
 |---|---|
-| Claude | A `PreToolUse` hook (`claudeCheckInHooks`) and `canUseTool` deny each tool that is not a read (`CLAUDE_CHECK_IN_TOOLS`), `AskUserQuestion`, `TodoWrite` or an OpenBot tool. A hook runs also when an allow rule of the user matches. The MCP tools of the user's servers, Bash, file writes, `WebFetch` and subagents are denied. |
-| Codex | `turn/start` sends a read-only sandbox with no network and the `untrusted` approval policy for the turn, and OpenBot declines each approval. Codex runs MCP tools outside its sandbox, and a tool set to "always allow" asks nothing, so a Codex agent gets nudges only when no MCP server is on. |
+| Claude | A `PreToolUse` hook (`claudeCheckInHooks`) and `canUseTool` deny each tool that is not a local read (`CLAUDE_CHECK_IN_TOOLS`), `AskUserQuestion`, `TodoWrite` or exactly `mcp__openbot__<tool>` for a tool of `CHECK_IN_OPENBOT_TOOLS`. A user server named `openbot_` or `openbot.` makes names with the same prefix, so a prefix match is not enough. A hook runs also when an allow rule of the user matches. The MCP tools and resources of the user's servers, Bash, file writes, `WebFetch`, `WebSearch` and subagents are denied. |
+| Codex | `turn/start` sends a read-only sandbox with no network and the `untrusted` approval policy for the turn, and OpenBot declines each approval. Codex runs MCP tools, its apps (connectors), its plugins and its browser and computer use outside its sandbox, and a tool set to "always allow" asks nothing. So a Codex agent gets nudges only when no MCP server of OpenBot is on and its effective Codex config (`config/read` of its running Codex process, or the last read at a session start when it has no process; that is the `config.toml` of its `CODEX_HOME`) sets `features.apps`, `features.plugins`, `features.browser_use` and `features.computer_use` to `false`, turns on no plugin and no app, and does not send approvals to Codex's own reviewer (`codexConfigAllowsCheckIn`). Codex 0.164 turns each of those features on by default. A failed read, or no read, sends no nudge. The MCP servers of that file do not count: each thread of OpenBot turns them off. |
 | Each other provider (ACP agents, Pi, Grok, Muse, and the rest) | Not restricted. No nudge: the user gets the `stall-alert` line. |
 
 A
@@ -208,6 +212,12 @@ that stalls again gets one `stall-alert` line for the user, which counts as unre
 nudges. A Stop, a wait or a finished answer in the nudge turn ends the check. A nudge delivery that
 ends with no turn end (a restart, a Stop of a turn that no provider ran) ends its check.
 `OPENBOT_STALL_SWEEP=0` turns the sweep off.
+
+A wait that a nudge turn opens (`await_event`) serves the request of the user that the nudge repeats
+(`waitRequestText`), not the text of the nudge. Its wake turn runs with the agent's normal permissions,
+as every wake does, and its text is the same as for any other wait: the request, and the agent's note,
+which the wake text calls "your own reminder, not a message from the user: do only what the request
+asks". So a check-in turn cannot give a later turn an instruction that the user did not give.
 
 A routine run in an agent's own chat (no task, channel or messaging delivery) does not resume the
 chat's provider session. `DrainScheduler.startDelivery` starts a new session for it with
