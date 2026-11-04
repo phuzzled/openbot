@@ -59,5 +59,7 @@ export const messages = {
     "Memórias: {saved} salvas, {updated} atualizadas, {forgotten} esquecidas, {notChanged} não alteradas porque outro tópico as alterou antes.",
   "status.agent.nextStepContinues": "O agente parou antes da próxima etapa. Ele continua ({current} de {limit}).",
   "status.agent.planContinues": "O plano tem etapas abertas. O agente continua ({current} de {limit}).",
+  "status.agent.stallAlert":
+    "Este agente parou com trabalho ainda aberto, e os lembretes não ajudaram. O OpenBot não vai lembrá-lo de novo sobre este pedido. Leia a última resposta dele e diga o que fazer a seguir.",
   "status.agent.branchTitle": "Chat ramificado",
 } as const satisfies PartialTranslation<typeof source>;

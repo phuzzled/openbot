@@ -59,5 +59,7 @@ export const messages = {
     "Recuerdos: {saved} guardados, {updated} actualizados, {forgotten} olvidados, {notChanged} sin cambios porque otro hilo los cambió antes.",
   "status.agent.nextStepContinues": "El agente se detuvo antes del siguiente paso. Continúa ({current} de {limit}).",
   "status.agent.planContinues": "El plan tiene pasos pendientes. El agente continúa ({current} de {limit}).",
+  "status.agent.stallAlert":
+    "Este agente se detuvo con trabajo pendiente y los recordatorios no ayudaron. OpenBot no se lo recordará otra vez para esta solicitud. Lee su última respuesta y dile qué hacer a continuación.",
   "status.agent.branchTitle": "Chat ramificado",
 } as const satisfies PartialTranslation<typeof source>;

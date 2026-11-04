@@ -185,6 +185,36 @@ export function isWaitWakeDelivery(
   );
 }
 
+/** The first line of a stall nudge (`StallSweep`). It tells a nudge from the wake of timed waits. */
+export const STALL_NUDGE_HEADER = "OpenBot check: your last turn ended with work still open.";
+
+/**
+ * The text of a stall nudge: the reason, what to do, and the request, so a compacted context still
+ * knows it. `nudge` and `limit` count the nudges of the request.
+ */
+export function stallNudgeText(input: { reason: string; requestText: string; nudge: number; limit: number }): string {
+  return [
+    STALL_NUDGE_HEADER,
+    "This is not a message from the user or from a teammate.",
+    `Reason: ${input.reason}`,
+    "Your last turn ended with work still open and nothing scheduled to bring you back. Do one of these now:",
+    "- Finish the work.",
+    `- Open a wait with openbot.${AWAIT_EVENT_TOOL} and wakeAfterMinutes for the thing that you wait for.`,
+    "- Ask the user with openbot.ask_user if only the user can unblock it.",
+    "- If the work is done, report it to the user and say that it is done.",
+    `This is check ${input.nudge} of ${input.limit}. After the last check, OpenBot tells the user that the work stopped.`,
+    "--- the request ---",
+    input.requestText,
+  ].join("\n");
+}
+
+/** Whether the delivery is a stall nudge: a wake-shaped message of the agent to itself (`stallNudgeText`). */
+export function isStallNudgeDelivery(
+  delivery: Pick<QueueDelivery, "sender" | "recipientAgentId" | "expectsReply" | "text">,
+): boolean {
+  return isWaitWakeDelivery(delivery) && delivery.text.startsWith(STALL_NUDGE_HEADER);
+}
+
 /** Whether the run of this delivery can continue open waits: a routine run or the wake of timed waits. */
 export function deliveryWakesWaits(
   delivery: Pick<QueueDelivery, "sender" | "recipientAgentId" | "expectsReply">,
@@ -213,7 +243,10 @@ export function deliveryPromptInput(context: DeliveryContext, sources: DeliveryP
       displayText || "(The reply contains attachments only.)",
     ].join("\n");
   }
-  if (isWaitWakeDelivery(delivery)) {
+  if (isStallNudgeDelivery(delivery)) {
+    // A stall nudge holds its own full text: the reason, the actions and the request.
+    text = delivery.text;
+  } else if (isWaitWakeDelivery(delivery)) {
     // The wake of timed waits. Its text is only the notes; the waits below give the requests.
     text = [
       `A wait that you opened with openbot.${AWAIT_EVENT_TOOL} and a wake time is due now. This is not a message from the user or from a teammate.`,

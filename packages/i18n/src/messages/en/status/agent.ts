@@ -92,5 +92,7 @@ export const messages = defineMessages("status.agent", {
   "status.agent.vaultField.email": "Email address",
   "status.agent.nextStepContinues": "The agent stopped before its next step. It continues ({current} of {limit}).",
   "status.agent.planContinues": "The plan has open steps. The agent continues ({current} of {limit}).",
+  "status.agent.stallAlert":
+    "This agent stopped with work still open, and reminders did not help. OpenBot does not remind it again for this request. Read its last answer and tell it what to do next.",
   "status.agent.branchTitle": "Branched chat",
 });

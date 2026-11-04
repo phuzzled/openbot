@@ -17,6 +17,7 @@ import {
   isAgentContextCategories,
   latestTurnAnswer,
   PLAN_CONTINUATION_ITEM_TYPE,
+  type QueueDelivery,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
@@ -216,6 +217,22 @@ export interface TurnHooks {
    * deliveries end, so the waits they woke get no new time (`TimedWaitWakes.wakeStopped`).
    */
   waitWakeStopped(agentId: string, deliveryIds: readonly string[]): void;
+  /**
+   * A turn ended and its deliveries settled (fork: the stall sweep). `taskId` is the task of its lane,
+   * `excludedLane` is true for a channel or messaging thread, a routine session, a quiet run or a
+   * no-update answer, and `continued` when a plan continuation is queued. It never fails the turn.
+   */
+  turnSettled?(turn: {
+    agentId: string;
+    taskId: string | null;
+    turnId: string;
+    outcome: string;
+    continued: boolean;
+    excludedLane: boolean;
+    deliveries: readonly QueueDelivery[];
+    answer: string | undefined;
+    plan: ConversationPlan | null;
+  }): void;
   /** Ends the provider session of a routine run. Nothing for any other session, or a second time. */
   closeRoutineSession(externalThreadId: string): Effect.Effect<void>;
   /** Gives the answer of a routine run in its own session to the session of the agent's chat. */
@@ -1353,6 +1370,17 @@ export class TurnLifecycle {
           if (delivery.sender.kind === "agent") this.#hooks.scheduleDrain(delivery.sender.agentId);
         }
       }
+      this.#hooks.turnSettled?.({
+        agentId,
+        taskId: laneTaskId,
+        turnId,
+        outcome,
+        continued: continuation !== null,
+        excludedLane: channelTurn || routineSession || quiet || markerAnswer || (taskTurn && laneTaskId === null),
+        deliveries: deliveries.map(({ delivery }) => delivery),
+        answer: latestAssistant?.text,
+        plan: snapshot.messages.find((message) => message.id === `${turnId}:plan`)?.plan ?? null,
+      });
       // Each run start saved the earlier preview; a quiet turn puts back the oldest one, unless
       // something else changed the preview since. Every turn takes its entries, so none stays behind.
       const savedPreviews = deliveries.flatMap(({ delivery }) =>

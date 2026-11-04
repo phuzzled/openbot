@@ -59,5 +59,7 @@ export const messages = {
     "Souvenirs : {saved} enregistrés, {updated} mis à jour, {forgotten} oubliés, {notChanged} non modifiés, car un autre fil les a modifiés avant.",
   "status.agent.nextStepContinues": "L’agent s’est arrêté avant l’étape suivante. Il continue ({current} sur {limit}).",
   "status.agent.planContinues": "Le plan a des étapes en cours. L’agent continue ({current} sur {limit}).",
+  "status.agent.stallAlert":
+    "Cet agent s’est arrêté avec du travail en cours, et les rappels n’ont pas aidé. OpenBot ne le relance plus pour cette demande. Lisez sa dernière réponse et dites-lui quoi faire ensuite.",
   "status.agent.branchTitle": "Chat dérivé",
 } as const satisfies PartialTranslation<typeof source>;

@@ -60,5 +60,7 @@ export const messages = {
     "Память: сохранено {saved}, обновлено {updated}, забыто {forgotten}, не изменено {notChanged}, потому что другая ветка изменила их раньше.",
   "status.agent.nextStepContinues": "Агент остановился перед следующим шагом. Он продолжает ({current} из {limit}).",
   "status.agent.planContinues": "В плане есть незавершённые шаги. Агент продолжает ({current} из {limit}).",
+  "status.agent.stallAlert":
+    "Этот агент остановился, не закончив работу, и напоминания не помогли. OpenBot больше не будет напоминать ему об этом запросе. Прочитайте его последний ответ и скажите, что делать дальше.",
   "status.agent.branchTitle": "Ответвлённый чат",
 } as const satisfies PartialTranslation<typeof source>;
