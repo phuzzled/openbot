@@ -1049,9 +1049,11 @@ try {
   await check("a restart during a turn with open steps queues exactly one continuation", async () => {
     const agent = await createAgent("Interrupted");
     const mark = loggedTurns().length;
+    // The request names the merge: a restored chain toward an outward step ("Merge") that the request
+    // did not name stops (`stall-sweep/continuation-gate.ts`).
     const id = await send(
       agent.id,
-      `Sync it. ${plan({
+      `Sync and merge it. ${plan({
         steps: [
           ["Fetch", "completed"],
           ["Merge", "inProgress"],
