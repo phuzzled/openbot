@@ -236,6 +236,14 @@ consent request of the thread with no card, also for an agent with Full access. 
 | Codex | Not restricted fully: Codex runs MCP tools, its apps (connectors), its plugins and its browser and computer use outside its sandbox, its effective config can come from project layers, and a running thread keeps the config that it started with. No nudge: the user gets the `stall-alert` line. A nudge delivery that still reaches a Codex thread (the provider changed after the sweep queued it) runs with a read-only sandbox with no network and the `untrusted` approval policy, and OpenBot declines each approval. |
 | Each other provider (ACP agents, Pi, Grok, Muse, and the rest) | Not restricted. No nudge: the user gets the `stall-alert` line. |
 
+`OPENBOT_STALL_NUDGE_PROVIDERS` is a test and expert switch: a comma list of the providers that get
+nudges (`stallNudgeProviders`). Only `claude` and `codex` count, because only they have a code lock;
+unset, empty or unknown names give `claude` only. With `codex` listed, a Codex nudge turn has only its
+read-only sandbox and `untrusted` approvals. Its apps (also the legacy `connectors` key), plugins,
+browser and computer use, and the `.codex/config.toml` of a trusted project run outside them, and a
+running thread keeps the config that it started with, so turn those off and restart OpenBot after each
+Codex config edit (review 8). `scripts/stall-sweep-e2e.ts` lists `claude,codex`.
+
 A
 nudge turn that stalls again keeps the request and its count, and the next check is 60 minutes later.
 After 2 nudges of one request, or 12 nudges of one agent in 24 hours (`fork_stall_nudges`), a lane
