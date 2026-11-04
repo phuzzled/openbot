@@ -209,6 +209,8 @@ export const messages = {
     "Geef wakeAt op als een ISO 8601-tijd met tijdzone, zoals 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "De wektijd moet in de toekomst liggen en hoogstens 30 dagen vooruit. wakeAfterMinutes moet tussen 5 en 43200 liggen.",
+  "error.backend.agentWaitWakeCap":
+    "Dit wachtpunt is {limit} keer op zijn tijd gewekt, het maximum. Controleer niet opnieuw: vertel de gebruiker wat je hebt gevonden en wat nog openstaat, en sluit het wachtpunt daarna met openbot.close_wait.",
   "error.backend.agentWaitRemoteUnsupported": "Open wachtpunten zijn alleen beschikbaar voor agents op deze computer.",
   "error.backend.markUnreadRemoteUnsupported":
     "Een bericht als ongelezen markeren is alleen beschikbaar voor agents op deze computer.",

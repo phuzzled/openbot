@@ -16,6 +16,11 @@ const NEAR_LIMIT_MARGIN = 3;
 
 /** The shortest delay of a timed wait: a shorter one is a busy loop, not a wait. */
 export const WAKE_AFTER_MINUTES_MIN = 5;
+/**
+ * The most times that the wake time of one wait wakes it. A run that it woke cannot set another time
+ * after this: the agent reports to the user instead of checking again and again.
+ */
+export const TIME_WAKES_MAX = 20;
 /** The longest delay of a timed wait: 30 days. */
 export const WAKE_AFTER_MINUTES_MAX = 43_200;
 const MINUTE_MS = 60_000;
@@ -165,6 +170,8 @@ export class AgentWaits {
     const continued = deliveries.flatMap((context) => this.#store.wokenBy(context.delivery.id));
     if (continued.length > 0) {
       if (wakeAt) {
+        if (continued.some((wait) => (wait.timeWakes ?? 0) >= TIME_WAKES_MAX))
+          return openBotToolFailure(sourceText("error.backend.agentWaitWakeCap", { limit: TIME_WAKES_MAX }));
         this.#store.setWakeAt(
           caller.agentId,
           continued.map((wait) => wait.id),

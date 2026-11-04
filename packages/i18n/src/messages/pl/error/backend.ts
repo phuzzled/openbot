@@ -203,6 +203,8 @@ export const messages = {
     "Podaj wakeAt jako czas ISO 8601 ze strefą czasową, na przykład 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "Czas wybudzenia musi być w przyszłości i najwyżej 30 dni od teraz. wakeAfterMinutes musi mieć wartość od 5 do 43200.",
+  "error.backend.agentWaitWakeCap":
+    "To oczekiwanie wybudziło się o swojej porze {limit} razy, czyli maksymalnie. Nie sprawdzaj ponownie: powiedz użytkownikowi, co udało się ustalić i co nadal czeka, a potem zamknij oczekiwanie za pomocą openbot.close_wait.",
   "error.backend.agentWaitRemoteUnsupported": "Otwarte oczekiwania są dostępne tylko dla agentów na tym komputerze.",
   "error.backend.markUnreadRemoteUnsupported":
     "Oznaczanie wiadomości jako nieprzeczytanej jest dostępne tylko dla agentów na tym komputerze.",

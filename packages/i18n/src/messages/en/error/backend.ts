@@ -196,6 +196,8 @@ export const messages = defineMessages("error.backend", {
     "Give wakeAt as an ISO 8601 time with a time zone, such as 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "The wake time must be in the future and at most 30 days away. wakeAfterMinutes must be from 5 to 43200.",
+  "error.backend.agentWaitWakeCap":
+    "This wait has woken at its time {limit} times, the most it can. Do not check back again: tell the user what you found and what still waits, then close the wait with openbot.close_wait.",
   "error.backend.agentWaitRemoteUnsupported": "Open waits are only available for agents on this computer.",
   "error.backend.markUnreadRemoteUnsupported":
     "Marking a message unread is only available for agents on this computer.",

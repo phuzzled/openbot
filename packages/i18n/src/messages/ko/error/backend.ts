@@ -195,6 +195,8 @@ export const messages = {
     "wakeAt은 시간대를 포함한 ISO 8601 시간으로 지정하세요. 예: 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "깨우는 시간은 미래여야 하며 최대 30일 이내여야 해요. wakeAfterMinutes는 5에서 43200 사이여야 해요.",
+  "error.backend.agentWaitWakeCap":
+    "이 대기는 지정한 시간에 {limit}번 깨어나 최대 횟수에 도달했어요. 다시 확인하지 말고, 찾은 내용과 아직 기다리는 내용을 사용자에게 알린 뒤 openbot.close_wait로 대기를 닫으세요.",
   "error.backend.agentWaitRemoteUnsupported": "열린 대기는 이 컴퓨터의 에이전트에서만 사용할 수 있어요.",
   "error.backend.markUnreadRemoteUnsupported":
     "메시지를 읽지 않음으로 표시하는 기능은 이 컴퓨터의 에이전트에서만 사용할 수 있어요.",

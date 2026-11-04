@@ -189,6 +189,8 @@ export const messages = {
     "اكتب wakeAt بصيغة وقت ISO 8601 مع منطقة زمنية، مثل 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "يجب أن يكون وقت الإيقاظ في المستقبل وألا يتجاوز 30 يومًا. يجب أن تكون قيمة wakeAfterMinutes بين 5 و43200.",
+  "error.backend.agentWaitWakeCap":
+    "استيقظ هذا الانتظار في وقته {limit} مرة، وهذا هو الحد الأقصى. لا تتحقق مرة أخرى: أخبر المستخدم بما وجدته وبما لا يزال ينتظر، ثم أغلق الانتظار باستخدام openbot.close_wait.",
   "error.backend.agentWaitRemoteUnsupported": "الانتظارات المفتوحة متاحة فقط للوكلاء على هذا الحاسوب.",
   "error.backend.markUnreadRemoteUnsupported": "تمييز رسالة كغير مقروءة متاح فقط للوكلاء على هذا الحاسوب.",
   "error.backend.routineFlowHandoffFailed": "تعذّر على المهمة الدورية تمرير العمل إلى هذا الوكيل.",

@@ -153,7 +153,9 @@ A wait that has a time, or that its time woke, is a timed wait. A routine run do
 also after its time is spent, unless the wait names that routine with `routineId`. A script event
 that names the wait wakes it. A timed wait that the agent leaves open with no new time stays open
 until the agent sets a new time, a script event names it, or someone closes or cancels it. A wait
-with no time and no `routineId` wakes on every routine run of its agent, as before.
+with no time and no `routineId` wakes on every routine run of its agent, as before. The time of one
+wait wakes it at most 20 times. After that, a new time is refused, and the agent tells the user what
+it found and closes the wait.
 
 An agent can have at most 20 open waits. `openbot.list_waits` shows an agent's open waits with their
 IDs and wake times, and `openbot.close_wait` closes one by ID. With `agentId`, both tools act on another local

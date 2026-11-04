@@ -197,6 +197,8 @@ export const messages = {
     "wakeAt değerini saat dilimi içeren bir ISO 8601 zamanı olarak verin, örneğin 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "Uyanma zamanı gelecekte olmalı ve en fazla 30 gün sonra olmalıdır. wakeAfterMinutes 5 ile 43200 arasında olmalıdır.",
+  "error.backend.agentWaitWakeCap":
+    "Bu bekleme kendi zamanında {limit} kez uyandı; bu üst sınır. Yeniden kontrol etmeyin: bulduklarınızı ve hâlâ bekleyenleri kullanıcıya söyleyin, ardından beklemeyi openbot.close_wait ile kapatın.",
   "error.backend.agentWaitRemoteUnsupported": "Açık beklemeler yalnızca bu bilgisayardaki ajanlar için kullanılabilir.",
   "error.backend.markUnreadRemoteUnsupported":
     "Bir mesajı okunmadı olarak işaretleme yalnızca bu bilgisayardaki ajanlar için kullanılabilir.",

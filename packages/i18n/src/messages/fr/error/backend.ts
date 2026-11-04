@@ -214,6 +214,8 @@ export const messages = {
     "Indiquez wakeAt comme une heure ISO 8601 avec un fuseau horaire, par exemple 2026-05-01T09:00:00+10:00.",
   "error.backend.agentWaitWakeRange":
     "L’heure de réveil doit être dans le futur et à 30 jours au plus. wakeAfterMinutes doit être compris entre 5 et 43200.",
+  "error.backend.agentWaitWakeCap":
+    "Cette attente s’est réveillée à son heure {limit} fois, le maximum. Ne vérifiez plus : dites à l’utilisateur ce que vous avez trouvé et ce qui reste en attente, puis fermez l’attente avec openbot.close_wait.",
   "error.backend.agentWaitRemoteUnsupported":
     "Les attentes ouvertes ne sont disponibles que pour les agents de cet ordinateur.",
   "error.backend.markUnreadRemoteUnsupported":
