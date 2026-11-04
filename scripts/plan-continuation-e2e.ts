@@ -23,8 +23,9 @@
 //   8b. A Stop before that continuation starts still gives the teammate one result.
 //   9. A routine run continues in its own session, and its run ends once with the last answer.
 //  10. A restart while a continuation waits runs that continuation once, with a note about the restart.
-//  11. A restart during a turn with open steps queues exactly one continuation. A turn with no plan
-//      ends as interrupted, as before.
+//  11. A restart during a turn with open steps queues exactly one continuation, whose note says that
+//      actions may have happened. A turn that sent a message, or that has no plan, ends as
+//      interrupted, as before.
 // Not checked: a message sent in the short gap before a continuation starts. The drain starts the
 // continuation at once, and a hidden agent refuses new messages. Check 7 covers the same rule.
 // No provider, account or network is used. `bun run test:plan-continuation`.
@@ -1069,6 +1070,10 @@ try {
     );
     assert.ok(turns[1]?.text.includes("OpenBot restarted"), "The note says that OpenBot restarted.");
     assert.ok(turns[1]?.text.includes("[in progress] Merge"), "The note names the open step.");
+    assert.ok(
+      turns[1]?.text.includes("cut off") && turns[1]?.text.includes("do not do it again"),
+      "The note says that actions may have happened, and not to repeat them.",
+    );
     assert.equal(errorsFor(agent.id, since).length, 0, "No error shows.");
     // A second restart does not run the request again.
     await restart();
@@ -1081,6 +1086,44 @@ try {
       "No other continuation turn runs.",
     );
     return { turns: turns.length };
+  });
+
+  await check("a restart during a turn that sent a message ends the turn as before", async () => {
+    const agent = await createAgent("Sender");
+    const helper = await createAgent("Receiver");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `Send the note, then file it. ${plan({
+        steps: [
+          ["Send the note", "completed"],
+          ["File it", "inProgress"],
+        ],
+        planEarly: true,
+        delayMs: 60_000,
+        calls: [{ tool: "send_message", arguments: { recipientAgentIds: [helper.id], text: "FYI: the note." } }],
+      })}`,
+    );
+    const thread = await waitFor("the running turn", () => turnsSince(mark)[0]?.threadId);
+    await waitFor(
+      "the sent message and the plan",
+      () =>
+        current.service
+          .listQueue(helper.id)
+          .deliveries.some((delivery) => delivery.sender.kind === "agent" && delivery.sender.agentId === agent.id) &&
+        chatMessages(agent.id).some((message) => message.plan?.steps.some((step) => step.text === "File it")),
+    );
+    await restart();
+    assert.equal(await settled(id), "interrupted", "The request ends as interrupted.");
+    await new Promise((done) => setTimeout(done, 500));
+    // The receiver's answer can start a later turn in the chat; no turn of the chat is a continuation.
+    assert.equal(
+      turnsSince(mark).some((turn) => turn.threadId === thread && turn.note),
+      false,
+      "No continuation turn runs: it could send the message again.",
+    );
+    assert.equal(continuationLines(agent.id).length, 0);
+    return { turns: 1 };
   });
 
   await check("a restart during a turn without a plan ends the turn as before", async () => {

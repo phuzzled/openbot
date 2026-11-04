@@ -1,4 +1,8 @@
-import { CONVERSATION_PLAN_ITEM_TYPE, type ConversationSnapshot } from "@openbot/contracts/ipc";
+import {
+  CONVERSATION_PLAN_ITEM_TYPE,
+  type ConversationSnapshot,
+  parseHostedSiteConversationEventItemType,
+} from "@openbot/contracts/ipc";
 import { Cause, Effect, Schema } from "effect";
 import type { AgentProvider } from "../agent-client";
 import type { AgentStore } from "../agent-store";
@@ -259,12 +263,13 @@ export class BootRecovery {
     }).pipe(Effect.catch(() => Effect.succeed(interrupted)));
     // A failed provider read keeps the conservative interrupted result; never replay side effects.
     // A turn that the restart interrupted while its plan had open steps continues once more, with a
-    // note that tells the agent to check the saved work first. The interrupted turn does not run again.
+    // note that tells the agent that actions may have happened and to check before it repeats one. The
+    // interrupted turn does not run again, and a turn that did an outward action does not continue.
     const continues =
       terminal === "interrupted" &&
       delivery.turnId !== null &&
       this.#restartedDeliveryIds.delete(delivery.id) &&
-      (yield* recoveryStep(() => this.#restorePlan(delivery, [...earlierTurnIds, delivery.turnId ?? ""])));
+      (yield* recoveryStep(() => this.#restorePlan(delivery, [...earlierTurnIds, delivery.turnId ?? ""], true)));
     if (continues && delivery.turnId)
       yield* this.#mailbox.requeueForPlan(delivery.id, delivery.turnId).pipe(toBootRecoveryFailed);
     else yield* this.#mailbox.markTerminal(delivery.id, terminal, reason).pipe(toBootRecoveryFailed);
@@ -309,10 +314,11 @@ export class BootRecovery {
    * Restores the plan chain of one request after the restart, from the plans that its turns stored
    * (`turnIds`, in order). Only a message of the user or of an agent, in the agent's own chat or in
    * a task: a channel or messaging thread does not continue, and a routine run's own session ended
-   * with the process. A turn that asked the user a question does not continue either. Returns
-   * whether the chain was restored.
+   * with the process. A turn that asked the user a question does not continue either. When the
+   * restart `interrupted` the last turn, that turn also must not have done an outward action that
+   * OpenBot recorded (`didOutwardAction`). Returns whether the chain was restored.
    */
-  #restorePlan(delivery: UnresolvedDelivery, turnIds: readonly string[]): boolean {
+  #restorePlan(delivery: UnresolvedDelivery, turnIds: readonly string[], interrupted = false): boolean {
     if (delivery.sender.kind !== "user" && delivery.sender.kind !== "agent") return false;
     const agent = this.#store.list().find((candidate) => candidate.id === delivery.recipientAgentId);
     if (!agent) return false;
@@ -322,6 +328,7 @@ export class BootRecovery {
     const turns = new Set(turnIds);
     const lastTurnId = turnIds.at(-1);
     if (snapshot.messages.some((message) => message.turnId === lastTurnId && message.questionPrompt)) return false;
+    if (interrupted && lastTurnId && this.#didOutwardAction(agent.id, lastTurnId, snapshot)) return false;
     return this.#planContinuation.restore({
       agentId: agent.id,
       taskId: this.#mailbox.taskIdForDelivery(delivery.id),
@@ -329,6 +336,23 @@ export class BootRecovery {
       turnIds,
       ...requestPlans(snapshot, turns),
     });
+  }
+
+  /**
+   * Whether the turn did an action outside its own chat that OpenBot recorded: it sent a message with
+   * a tool (`send_message`, a channel or a task), or it changed a hosted site, which waits for the
+   * user's approval. A continuation of a turn that the restart cut off could do it again, so the
+   * request ends as interrupted, as before, and the user decides. The provider's own tools, such as a
+   * mail send through an MCP server or a shell command, are not recorded here: the continuation note
+   * tells the agent to check before it repeats one.
+   */
+  #didOutwardAction(agentId: string, turnId: string, snapshot: ConversationSnapshot): boolean {
+    return (
+      this.#mailbox.hasAgentMessageFromTurn(agentId, turnId) ||
+      snapshot.messages.some(
+        (message) => message.turnId === turnId && parseHostedSiteConversationEventItemType(message.itemType) !== null,
+      )
+    );
   }
 
   /**
