@@ -1117,6 +1117,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         taskThreads: () => this.#tasks.executionThreads(),
         deliveryThreadId: (deliveryId) => this.#deliveryThreadId(deliveryId),
         deliverySettled: (deliveryId, terminal) => this.messaging.deliverySettled(deliveryId, terminal),
+        hasOpenWait: (agentId, deliveryIds) => turnLeavesWaitOpen(this.#waits.list(agentId).waits, deliveryIds),
       },
     });
     this.channels = new ChannelService(store.database, mailbox, new ChannelImages(store.channelImagesRoot), {
