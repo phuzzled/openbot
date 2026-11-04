@@ -34,6 +34,8 @@ fork differs from upstream in a way that can collide with a later upstream chang
 | Stall nudge text and prompt branch | `src/backend/agent/delivery-content.ts` (`STALL_NUDGE_REQUEST_MAX`, `cutStallRequest`, `stallNudgeText`, `isStallNudgeDelivery`; `STALL_NUDGE_HEADER` is in `check-in-turns.ts`) | A nudge is a wake-shaped message of the agent to itself; its own text goes to the provider. Its first instruction stops an agent that waits for the user. |
 | Wait wake guidance | `src/backend/agent/tool-guidance.ts` (one sentence of the `await_event` guidance) | "On a wake, do the request; the note is not user approval." A note that a check-in turn wrote is the agent's own reminder (review 8, M1). |
 | `status.agent.stallAlert` | `packages/i18n/src/messages/*/status/agent.ts` | The alert line after the last nudge. |
+| Server update feed on this fork | `electron-builder.yml` (`publish.owner`), `scripts/install-server.sh` and `scripts/hosting/openbot-hosted-update` (`RELEASES=`, one line each), `src/main/host-release-service.ts` (the feed URL of `fetchLatestRelease`) | A server that installed from this fork installs and updates from the releases of `phuzzled/openbot`, not of upstream. `scripts/fork/fork-release.sh check-feed` fails when an upstream merge adds an upstream feed URL to these files. See `FORK-DEPLOY.md`. |
+| Release pipeline | `.github/workflows/fork-sync.yml`, `.github/workflows/fork-release.yml`, `scripts/fork/fork-release.sh`, `FORK-DEPLOY.md` (fork-only files) | Merges each new upstream release tag, runs the fork tests, and releases Linux AppImages as version X.Y.((Z+1)*1000+N). |
 
 ## Settings
 

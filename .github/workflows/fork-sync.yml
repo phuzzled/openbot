@@ -1,0 +1,211 @@
+name: Fork sync
+
+# Keeps this fork on the newest upstream OpenBot release, with the fork commits on top, and releases
+# it for the Linux servers that install from this fork. See FORK-DEPLOY.md.
+#
+# 1. When upstream has a release that main does not contain, merge its tag into main in a branch.
+#    The fork tracks release tags, never upstream main, so it ships only released upstream code.
+# 2. Run the fork tests on the result.
+# 3. When they pass, push main, tag the next fork version and call fork-release.yml.
+#    When main has fork commits with no release, step 3 runs without a merge.
+#
+# A merge conflict or a failed test ships nothing. It opens (or adds a comment to) an issue named
+# "Fork sync blocked: upstream <tag>", and pushes a failed merge to fork-sync/<tag> for inspection.
+
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge the upstream release and test
+    if: github.repository != 'nightly-labs/openbot'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      issues: write
+    outputs:
+      tag: ${{ steps.push.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          # The tests run dependency code. Only the push step gets a token.
+          persist-credentials: false
+
+      - name: Find the work
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/fork/fork-release.sh fetch-upstream
+          latest=$(scripts/fork/fork-release.sh upstream-latest)
+          base=$(scripts/fork/fork-release.sh base HEAD)
+          echo "Upstream latest release: $latest. Fork base: $base."
+          action=none
+          if ! git merge-base --is-ancestor "refs/upstream-tags/$latest^{commit}" HEAD; then
+            action=merge
+          elif [ -z "$(scripts/fork/fork-release.sh fork-tag HEAD)" ]; then
+            action=release
+          fi
+          echo "Action: $action."
+          {
+            echo "action=$action"
+            echo "latest=$latest"
+            echo "base=$base"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Merge the upstream release
+        id: merge
+        if: steps.plan.outputs.action == 'merge'
+        shell: bash
+        env:
+          LATEST: ${{ steps.plan.outputs.latest }}
+        run: |
+          set -euo pipefail
+          git switch --create "fork-sync/$LATEST"
+          if git merge --no-ff --no-edit -m "Merge upstream OpenBot $LATEST" "refs/upstream-tags/$LATEST^{commit}"; then
+            exit 0
+          fi
+          {
+            echo "The merge of upstream $LATEST into main has conflicts in these files:"
+            echo
+            # shellcheck disable=SC2016 # The backticks are Markdown.
+            git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/'
+          } > "$RUNNER_TEMP/failure.md"
+          git merge --abort
+          exit 1
+
+      - name: Set up Bun
+        if: steps.plan.outputs.action != 'none'
+        uses: ./.github/actions/setup-bun
+        with:
+          install: ignore-scripts
+
+      # The update feed of the server must stay on this fork, also when upstream adds a feed URL.
+      - name: Check the update feed
+        if: steps.plan.outputs.action != 'none'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! scripts/fork/fork-release.sh check-feed 2> "$RUNNER_TEMP/feed.txt"; then
+            { echo "The update feed of the server names upstream after the merge:"; echo; echo '```'; cat "$RUNNER_TEMP/feed.txt"; echo '```'; } > "$RUNNER_TEMP/failure.md"
+            exit 1
+          fi
+
+      - name: Typecheck
+        if: steps.plan.outputs.action != 'none'
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! bun run desktop:typecheck 2>&1 | tee "$RUNNER_TEMP/typecheck.log"; then
+            { echo "The typecheck failed:"; echo; echo '```'; tail -n 60 "$RUNNER_TEMP/typecheck.log"; echo '```'; } > "$RUNNER_TEMP/failure.md"
+            exit 1
+          fi
+
+      # The test files that fork commits added or changed, and the end-to-end checks of the fork
+      # features. Add a new fork end-to-end script to `e2e` below.
+      - name: Run the fork tests
+        if: steps.plan.outputs.action != 'none'
+        shell: bash
+        run: |
+          set -uo pipefail
+          mapfile -t units < <(scripts/fork/fork-release.sh unit-tests HEAD)
+          e2e=(stall-sweep plan-continuation timed-waits timed-waits-followup timed-waits-adversarial agent-waits-tools)
+          failed=()
+          if [ "${#units[@]}" -gt 0 ]; then
+            echo "Unit tests: ${units[*]}"
+            bun run test:desktop -- "${units[@]}" 2>&1 | tee "$RUNNER_TEMP/unit-tests.log" || failed+=(unit-tests)
+          fi
+          for name in "${e2e[@]}"; do
+            echo "::group::test:$name"
+            bun run "test:$name" 2>&1 | tee "$RUNNER_TEMP/$name.log" || failed+=("$name")
+            echo "::endgroup::"
+          done
+          [ "${#failed[@]}" -eq 0 ] && exit 0
+          {
+            echo "These fork tests failed: ${failed[*]}."
+            for name in "${failed[@]}"; do
+              echo; echo "#### $name"; echo '```'; tail -n 40 "$RUNNER_TEMP/$name.log"; echo '```'
+            done
+          } > "$RUNNER_TEMP/failure.md"
+          exit 1
+
+      - name: Push main and tag the fork release
+        id: push
+        if: steps.plan.outputs.action != 'none'
+        shell: bash
+        env:
+          # A merge of upstream changes .github/workflows, and GITHUB_TOKEN cannot push that. The
+          # token needs Contents and Workflows write on this repository.
+          PUSH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          version=$(scripts/fork/fork-release.sh version HEAD)
+          tag="v$version"
+          git tag --annotate "$tag" --message "OpenBot $version (fork of upstream $(scripts/fork/fork-release.sh base HEAD))"
+          remote="https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Not forced: when main moved during the run, the push fails, and the next run tries again.
+          git push --atomic "$remote" "HEAD:refs/heads/main" "refs/tags/$tag"
+          echo "Released $tag from $(git rev-parse HEAD)."
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Report the block
+        if: failure() && steps.plan.outputs.action != ''
+        shell: bash
+        env:
+          LATEST: ${{ steps.plan.outputs.latest }}
+          ACTION: ${{ steps.plan.outputs.action }}
+          PUSH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [ -f "$RUNNER_TEMP/failure.md" ] || echo "The sync failed. Read the run log." > "$RUNNER_TEMP/failure.md"
+          # A merge that tested red stays on a branch for inspection. It is not on main.
+          if [ "$ACTION" = merge ] && git rev-parse --verify --quiet "refs/heads/fork-sync/$LATEST" >/dev/null &&
+            [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            remote="https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            if git push --force "$remote" "HEAD:refs/heads/fork-sync/$LATEST"; then
+              # shellcheck disable=SC2016 # The backticks are Markdown.
+              printf '\nThe merge is on the branch `fork-sync/%s`.\n' "$LATEST" >> "$RUNNER_TEMP/failure.md"
+            fi
+          fi
+          title="Fork sync blocked: upstream $LATEST"
+          {
+            cat "$RUNNER_TEMP/failure.md"
+            echo
+            echo "Nothing was released. Run: $RUN_URL"
+            echo
+            echo "See FORK-DEPLOY.md, \"When the sync issue opens\"."
+          } > "$RUNNER_TEMP/body.md"
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\"))[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+  release:
+    name: Release
+    needs: sync
+    if: needs.sync.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/fork-release.yml
+    with:
+      tag: ${{ needs.sync.outputs.tag }}
