@@ -112,6 +112,7 @@ export const messages = {
   "chat.waits.state.resuming": "リクエストを続行中",
   "chat.waits.state.woken": "再開済み、未完了",
   "chat.waits.request": "「{text}」について",
+  "chat.waits.wakesAt": "{time} に再開",
   "chat.waits.actions": "その他の操作: {note}",
   "chat.waits.showRequest": "リクエストを表示",
   "chat.waits.cancel": "待機をキャンセル",

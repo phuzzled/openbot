@@ -17,6 +17,8 @@ export interface OpenWaitItem {
   request: string;
   /** When the agent opened the wait, as an ISO time. */
   openedAt: string;
+  /** When the wait wakes by itself, as an ISO time. Absent when only a routine run wakes it. */
+  wakeAt?: string | undefined;
   state: OpenWaitState;
 }
 
@@ -66,7 +68,7 @@ function OpenWaitList(props: OpenWaitsProps) {
   const woken = () => props.items.filter((item) => item.state === "woken").length;
   const wokenCount = () => (woken() > 0 ? t("chat.waits.woken", { count: woken() }) : "");
   const lead = () => props.items.find((item) => item.state === "resuming") ?? props.items[0];
-  const openedAt = (value: string) => {
+  const shortTime = (value: string) => {
     const date = new Date(value);
     return date.toDateString() === now().toDateString()
       ? format.date(date, { timeStyle: "short" })
@@ -118,7 +120,17 @@ function OpenWaitList(props: OpenWaitsProps) {
                   <span class="open-waits-row-meta">
                     <span class="open-waits-row-state">{t(STATE_LABEL[item().state])}</span>
                     <span aria-hidden="true">·</span>
-                    <span>{openedAt(item().openedAt)}</span>
+                    <span>{shortTime(item().openedAt)}</span>
+                    <Show when={item().wakeAt}>
+                      {(wakeAt) => (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span class="open-waits-row-wake">
+                            {t("chat.waits.wakesAt", { time: shortTime(wakeAt()) })}
+                          </span>
+                        </>
+                      )}
+                    </Show>
                     <span aria-hidden="true">·</span>
                     <span class="open-waits-row-request">{t("chat.waits.request", { text: item().request })}</span>
                   </span>

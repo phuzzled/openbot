@@ -210,7 +210,12 @@ export const messages = {
   "error.backend.agentWaitNoteRequired": "Indiquez une courte note qui précise l’objet de l’attente.",
   "error.backend.agentWaitRoutineGone": "Cet agent n’a pas de routine avec cet identifiant.",
   "error.backend.agentWaitNoRoutine":
-    "Seule une exécution de l’une de vos routines réveille une attente, et vous n’avez aucune routine. Créez-en une avec openbot.create_routine, puis ouvrez l’attente.",
+    "Seule une exécution de l’une de vos routines réveille une attente sans heure de réveil, et vous n’avez aucune routine. Pour revenir plus tard, appelez openbot.await_event avec wakeAfterMinutes. Pour attendre une routine, créez-en d’abord une avec openbot.create_routine.",
+  "error.backend.agentWaitWakeBoth": "Indiquez wakeAfterMinutes ou wakeAt, pas les deux.",
+  "error.backend.agentWaitWakeAtFormat":
+    "Indiquez wakeAt comme une heure ISO 8601 avec un fuseau horaire, par exemple 2026-05-01T09:00:00+10:00.",
+  "error.backend.agentWaitWakeRange":
+    "L’heure de réveil doit être dans le futur et à 30 jours au plus. wakeAfterMinutes doit être compris entre 5 et 43200.",
   "error.backend.agentWaitRemoteUnsupported":
     "Les attentes ouvertes ne sont disponibles que pour les agents de cet ordinateur.",
   "error.backend.markUnreadRemoteUnsupported":

@@ -4,7 +4,8 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite";
 
 /*
  * The block above the composer while an agent waits for something outside its turn: a build, a
- * nightly run, or a script event. A routine run of the agent wakes the wait.
+ * nightly run, a script event, or a time. A routine run of the agent, or the wake time it gave,
+ * wakes the wait.
  */
 
 /** A fixed moment, so the times read the same in every screenshot. */
@@ -17,6 +18,7 @@ const items: OpenWaitItem[] = [
     note: "Release build of 2.14, then upload the DMG and send the link",
     request: "Ship 2.14 and tell me when the DMG is up.",
     openedAt: minutesAgo(14),
+    wakeAt: minutesAgo(-120),
     state: "waiting",
   },
   {

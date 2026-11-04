@@ -779,6 +779,7 @@ function openWaitItems(waits: readonly AgentWait[], queue: QueueSnapshot | undef
     note: wait.note,
     request: wait.requestText,
     openedAt: wait.createdAt,
+    ...(wait.wakeAt ? { wakeAt: wait.wakeAt } : {}),
     state: wait.wakeDeliveryId && pending.has(wait.wakeDeliveryId) ? "resuming" : wait.wokenAt ? "woken" : "waiting",
   }));
 }

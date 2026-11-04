@@ -226,6 +226,7 @@ import { type AgentTaskBranchFailed, AgentTasks } from "./agent-tasks/agent-task
 import { type AgentThreadRecord, AgentThreadStore } from "./agent-threads/agent-thread-store";
 import { AgentWaitStore } from "./agent-waits/agent-wait-store";
 import { AgentWaits } from "./agent-waits/agent-waits";
+import { TimedWaitWakes } from "./agent-waits/timed-wait-wakes";
 import { automationRunCommand } from "./automation-command";
 import { toChannelOperationError } from "./channel-effects";
 import { type ChannelImageFile, ChannelImages } from "./channel-images";
@@ -450,6 +451,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #instructionChanges = new InstructionsChanges();
   readonly #memoryReview: MemoryReview;
   readonly #waits: AgentWaits;
+  readonly #timedWaits: TimedWaitWakes;
   readonly #tasks: AgentTasks;
   readonly #messageDeletion: MessageDeletion;
   readonly #tables: AgentTables | null;
@@ -661,20 +663,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // One timer for every routine owner. The sources are read lazily because `channels` and its
     // scheduler are built further down, and because an owner's earliest routine changes constantly.
     this.#routineTimer = new RoutineTimer(
-      () => [this.#routines, this.#channelRoutines, ...(options.extraRoutineSources?.() ?? [])],
+      () => [this.#routines, this.#channelRoutines, this.#timedWaits, ...(options.extraRoutineSources?.() ?? [])],
       () => this.#initialized && !this.#stopping,
       (code, error) => this.#emitError(code, error),
     );
+    const waitStore = new AgentWaitStore({ database: store.database });
     this.#waits = new AgentWaits({
-      store: new AgentWaitStore({ database: store.database }),
+      store: waitStore,
       mailbox,
       hooks: {
         emit: (event) => this.#emit(event),
         ownsRoutine: (agentId, routineId) => this.#routines.getRecord(agentId, routineId) !== null,
         hasRoutine: (agentId) => this.#routines.listRecordsFor(agentId).length > 0,
+        wakeTimesChanged: () => this.#routineTimer.arm(),
         requireKnownAgent: (agentId) => {
           this.#conversation.requireKnownAgent(agentId);
         },
+      },
+    });
+    this.#timedWaits = new TimedWaitWakes({
+      store: waitStore,
+      mailbox,
+      hooks: {
+        // As for routines: a hidden agent, or one that is copied or deleted, starts no new work.
+        mayWake: (agentId) =>
+          this.#store.list().some((agent) => agent.id === agentId) && this.#routines.mayDrain(agentId),
+        enqueueWake: (agentId, text, idempotencyKey) => this.#enqueueWaitWake(agentId, text, idempotencyKey),
+        changed: (agentId) => this.#emit({ type: "waits-changed", snapshot: this.#waits.list(agentId) }),
+        emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       },
     });
     this.#routines = new RoutineScheduler({
@@ -2741,6 +2757,45 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }).bind(this);
 
   /** Refuses new work for a hidden agent. A turn that already runs is not affected. */
+  /**
+   * The wake of timed waits: a message of the agent to its own chat, with no answer expected. Its input
+   * repeats the requests of the waits (`deliveryPromptInput`). It runs in the agent's chat, as a routine
+   * run with no side thread does.
+   */
+  readonly #enqueueWaitWake = Effect.fn("AgentService.enqueueWaitWake")(function* (
+    this: AgentService,
+    agentId: string,
+    text: string,
+    idempotencyKey: string,
+  ) {
+    const agent = yield* this.#store
+      .getOrCreate(agentId)
+      .pipe(Effect.mapError((failure) => ({ cause: failure.cause })));
+    const receipt = yield* this.#mailbox
+      .enqueue({
+        sender: { kind: "agent", agentId },
+        recipientAgentIds: [agentId],
+        text,
+        replyToMessageId: null,
+        expectsReply: false,
+        idempotencyKey,
+      })
+      .pipe(Effect.mapError((failure) => ({ cause: failure.cause })));
+    const deliveryId = receipt.deliveries[0]?.id;
+    if (!deliveryId) return yield* Effect.fail({ cause: new Error("Unable to create the wait wake delivery.") });
+    yield* Effect.try({
+      try: () => {
+        const snapshot = this.#conversation.ensureSnapshot(agentId, agent.threadId);
+        this.#mailboxSync.syncMailboxMessages(snapshot);
+        this.#conversation.emitConversation(snapshot);
+        this.#mailboxSync.emitQueue(agentId);
+        this.#drain.scheduleDrain(agentId);
+      },
+      catch: (cause) => ({ cause }),
+    });
+    return deliveryId;
+  }, Effect.uninterruptible);
+
   #requireNotHidden(agentId: string): void {
     if (this.#store.isHidden(agentId)) throw new Error(sourceText("error.backend.recipientHidden"));
   }

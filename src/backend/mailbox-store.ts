@@ -1338,7 +1338,11 @@ export class MailboxStore {
     const turnIds = this.#sourceTurnIds();
     for (const message of selectedStoredMessages) {
       const deliveries = deliveriesByMessage.get(message.id) ?? [];
-      if (message.sender.kind === "agent" && message.sender.agentId === agentId) {
+      // The wake of timed waits goes from the agent to itself in its own chat. It shows once, as the
+      // message that the agent receives, not also as a message that it sent.
+      const ownWake =
+        !message.taskId && deliveries.length > 0 && deliveries.every((item) => item.recipientAgentId === agentId);
+      if (message.sender.kind === "agent" && message.sender.agentId === agentId && !ownWake) {
         messages.push({
           id: `outbox-${message.id}`,
           turnId: turnIds.get(message.id),

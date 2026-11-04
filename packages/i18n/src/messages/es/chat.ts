@@ -112,6 +112,7 @@ export const messages = {
   "chat.waits.state.resuming": "Continuando la solicitud",
   "chat.waits.state.woken": "Despertada, sin cerrar",
   "chat.waits.request": "Para «{text}»",
+  "chat.waits.wakesAt": "Se reanuda {time}",
   "chat.waits.actions": "Más acciones: {note}",
   "chat.waits.showRequest": "Mostrar la solicitud",
   "chat.waits.cancel": "Cancelar la espera",
