@@ -344,7 +344,7 @@ export function planContinuationPrompt(
     "OpenBot note, not a message from the user. Your last turn ended while your plan still had open steps:",
     ...(afterRestart
       ? [
-          "OpenBot restarted, so your last turn may have stopped before it was done. Check the saved work before you continue.",
+          "OpenBot restarted, so your last turn may have been cut off before it was done, and some of its actions may already have happened. Before you send, post, pay, submit, publish, or do any other action that you cannot undo, check whether it already happened, for example in the sent mail or the current state, and do not do it again if it did. Check the saved work before you continue.",
         ]
       : []),
     ...steps.map((step) => `- [${step.status === "inProgress" ? "in progress" : "pending"}] ${step.text}`),

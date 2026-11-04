@@ -1941,6 +1941,18 @@ export class MailboxStore {
     });
   }
 
+  /**
+   * Whether this turn of the agent sent a message, to a teammate, a channel or a task: a tool call
+   * keys the message with its turn. A restart recovery reads it to keep from sending it again.
+   */
+  hasAgentMessageFromTurn(agentId: string, turnId: string): boolean {
+    const turnIds = this.#sourceTurnIds();
+    return this.#state.messages.some(
+      (message) =>
+        message.sender.kind === "agent" && message.sender.agentId === agentId && turnIds.get(message.id) === turnId,
+    );
+  }
+
   markStarting = Effect.fn("MailboxStore.markStarting")(function* (
     this: MailboxStore,
     deliveryId: string,
