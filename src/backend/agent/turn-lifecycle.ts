@@ -1306,10 +1306,9 @@ export class TurnLifecycle {
         : null;
       if (!continuation) this.#planContinuation.cancel(agentId, laneTaskId);
       else if (routineSession) this.#continuedRoutineSessions.add(threadId);
-      // Before the deliveries end: until then they hold their lane, so no later turn of that lane
-      // starts before the digest is in its handoff. A chat turn that starts at the same time keeps
-      // the digest for its next turn (see `ThreadLifecycle.deletePendingHandoff`). A run whose plan
-      // continues gives only the answer of its last turn.
+      // Before the deliveries end: until then they hold the chat's lane, so no turn of the chat
+      // starts before the digest is in its handoff. A run whose plan continues gives only the answer
+      // of its last turn.
       const routineDelivery = deliveries[0]?.delivery.id;
       if (
         routineSession &&
