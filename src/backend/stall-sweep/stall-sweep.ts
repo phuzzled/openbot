@@ -49,8 +49,10 @@ export type StallCheckWaitKey = Pick<
 
 /**
  * Whether an open wait backs a stall check: it runs in the check's lane (`laneOf`), and it serves the
- * check's request or nudge, or it opened at or after the check. An older wait of the lane for other
- * work, as one that a Stop left with no time, does not turn the sweep off for the lane.
+ * check's request or nudge, it opened at or after the check, or it has a wake time, so it brings the
+ * agent back to the lane by itself (a status question while the timed wait of the first request is
+ * open). An older wait of the lane with no time, as one that a Stop left, does not turn the sweep off
+ * for the lane.
  */
 export function waitBacksStallCheck(
   waits: readonly AgentWait[],
@@ -59,7 +61,9 @@ export function waitBacksStallCheck(
 ): boolean {
   const ids = [check.requestDeliveryId, ...(check.nudgeDeliveryId ? [check.nudgeDeliveryId] : [])];
   return waits.some(
-    (wait) => laneOf(wait) === check.taskId && (turnLeavesWaitOpen([wait], ids) || wait.createdAt >= check.createdAt),
+    (wait) =>
+      laneOf(wait) === check.taskId &&
+      (turnLeavesWaitOpen([wait], ids) || wait.createdAt >= check.createdAt || Boolean(wait.wakeAt)),
   );
 }
 
@@ -74,8 +78,8 @@ export interface StallSweepHooks {
   laneBusy(agentId: string, taskId: string | null): boolean;
   /**
    * Whether an open wait in the check's lane backs it: the wait serves the check's request or its
-   * nudge, or it opened at or after the check. An older, unrelated wait (one that a Stop left with no
-   * time) does not.
+   * nudge, it opened at or after the check, or it has a wake time. An older wait with no time (one
+   * that a Stop left) does not.
    */
   waitBacksCheck(check: StallCheckWaitKey): boolean;
   /** Whether the user sent the agent a message after this time. */
@@ -119,8 +123,8 @@ const isTerminal = (status: QueueDeliveryStatus | undefined) =>
  *
  * At its time, a check that is still valid queues one nudge in the lane: a message of the agent to
  * itself that gives the reason, the request, and the four ways to end the stall. A newer turn in the
- * lane, a busy lane, a wait that backs the check, or a message of the user since the check cancels
- * it. A teammate's message does not. A hidden agent keeps its check until it shows again, up to
+ * lane, a wait that backs the check, or a message of the user since the check cancels it. A busy lane
+ * puts it off, and a teammate's message does not cancel it. A hidden agent keeps its check until it shows again, up to
  * `STALL_MAX_AGE_MS`. With no ready provider the check waits.
  *
  * A nudge turn is checked as any turn, and counts against the nudges of its request. After
@@ -254,9 +258,14 @@ export class StallSweep implements RoutineDueSource {
       }
       if (!this.#hooks.mayWake(check.agentId)) continue;
       const { agentId, taskId } = check;
+      // A busy lane (a teammate's turn, a routine run, an unrelated wake) holds the check: it tries
+      // again later. The turn end of the lane still ends it when that turn is of the user.
+      if (this.#hooks.laneBusy(agentId, taskId)) {
+        this.#store.setDue(check.id, new Date(now.getTime() + RETRY_MS).toISOString());
+        continue;
+      }
       if (
         !this.#hooks.laneOpen(agentId, taskId) ||
-        this.#hooks.laneBusy(agentId, taskId) ||
         this.#hooks.waitBacksCheck(check) ||
         this.#hooks.userMessagedSince(agentId, check.createdAt)
       ) {

@@ -42,6 +42,7 @@ import {
   isRecord,
   type ThreadItem,
 } from "../protocol";
+import { answerWaitsOnUser } from "../stall-sweep/stall-detection";
 import type { AgentMemories } from "./agent-memories";
 import { answerFilePaths } from "./answer-file-paths";
 import type { AttentionBrowserHost, AttentionRegistry } from "./attention-registry";
@@ -57,7 +58,7 @@ import { markIncompleteImageGeneration } from "./image-generation";
 import { type InstructionsChanges, instructionsChangeMessage } from "./instructions-changes";
 import type { MailboxSync } from "./mailbox-sync";
 import { memoryChangesMessage } from "./memory-changes-message";
-import { type PlanContinuation, waitsForUser } from "./plan-continuation";
+import type { PlanContinuation } from "./plan-continuation";
 import { PLAN_UPDATED_METHOD, planFromNotification } from "./plan-updates";
 import {
   isBalanceDiagnostic,
@@ -553,7 +554,7 @@ export class TurnLifecycle {
   /**
    * Whether a completed turn may continue its plan: it served only messages of the user, of the agent
    * itself or of a teammate, or, in the run's own session (`routineRun`), of a routine; the user did
-   * not stop it, its last line asks nothing but whether to continue and does not say it waits, opened
+   * not stop it, its answer does not wait on the user (`answerWaitsOnUser`), opened
    * no wait and holds no question, approval or takeover, and no other message waits in its lane. A
    * teammate that asked for a result gets it after the last turn of the chain.
    */
@@ -576,7 +577,8 @@ export class TurnLifecycle {
       )
     )
       return false;
-    if (waitsForUser(answer)) return false;
+    // An answer that waits on the user, on an approval or on a named person does not continue.
+    if (answerWaitsOnUser(answer)) return false;
     return (
       !this.#hooks.turnStopped(agentId, taskId, turnId) &&
       !this.#hooks.hasOpenWait(
