@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   isStallNudgeDelivery,
   isWaitWakeDelivery,
-  STALL_NUDGE_HEADER,
+  nextStepContinuationPrompt,
+  planContinuationPrompt,
   STALL_NUDGE_REQUEST_MAX,
   stallNudgeText,
 } from "../agent/delivery-content";
+import { wokenWaitsPromptText } from "../agent-waits/agent-waits";
 import { applyForkSchema } from "../database/fork-schema";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import {
@@ -17,19 +19,16 @@ import {
   CHECK_IN_CODEX_SANDBOX,
   CHECK_IN_REFUSAL,
   CheckInTurns,
+  CodexCheckInConfigs,
   checkInAllowsClaudeTool,
   checkInAllowsOpenBotTool,
   checkInRestricts,
   claudeCheckInHooks,
+  codexConfigAllowsCheckIn,
+  STALL_NUDGE_HEADER,
+  waitRequestText,
 } from "./check-in-turns";
-import {
-  continuationAllowed,
-  nextOpenSteps,
-  outwardActions,
-  replyWaitsForUser,
-  stepsNeedApproval,
-} from "./continuation-gate";
-import { promiseTime } from "./promise-time";
+import { promiseTime, UNREAD_TIME } from "./promise-time";
 import { StallCheckStore } from "./stall-check-store";
 import { answerWaitsOnUser, detectStall, followUpPromise, type StallInput } from "./stall-detection";
 import {
@@ -319,10 +318,19 @@ describe("stall nudge text", () => {
 });
 
 describe("check-in turn restriction", () => {
-  it("lets an OpenBot tool through only when it reports, waits, schedules, asks or reads", () => {
-    for (const tool of ["await_event", "close_wait", "create_routine", "update_routine", "ask_user", "query_data"])
+  it("lets an OpenBot tool through only when it waits, asks or reads", () => {
+    for (const tool of ["await_event", "close_wait", "list_waits", "list_routines", "ask_user", "ask_ui", "query_data"])
       expect(checkInAllowsOpenBotTool("openbot", tool)).toBe(true);
     for (const tool of [
+      // Review 7, H1: a routine runs later as a normal turn, with no restriction.
+      "create_routine",
+      "update_routine",
+      "run_routine",
+      // Its timeout presses start: that is not the user's answer.
+      "acknowledge_request",
+      "request_api_key",
+      "remove_api_key",
+      "start_task",
       "send_message",
       "send_to_channel",
       "execute_data",
@@ -342,18 +350,30 @@ describe("check-in turn restriction", () => {
     expect(checkInAllowsOpenBotTool(null, "await_event")).toBe(false);
   });
 
+  it("lets a check-in turn close only a wait of its own agent", () => {
+    expect(checkInAllowsOpenBotTool("openbot", "close_wait", { waitId: "w" }, "a1")).toBe(true);
+    expect(checkInAllowsOpenBotTool("openbot", "close_wait", { waitId: "w", agentId: "a1" }, "a1")).toBe(true);
+    expect(checkInAllowsOpenBotTool("openbot", "close_wait", { waitId: "w", agentId: "a2" }, "a1")).toBe(false);
+    expect(checkInAllowsOpenBotTool("openbot", "close_wait", { waitId: "w", agentId: "a2" }, undefined)).toBe(false);
+    expect(checkInAllowsOpenBotTool("openbot", "list_waits", { agentId: "a2" }, "a1")).toBe(true);
+  });
+
   it("lets a Claude tool through only when it reads or is an OpenBot tool", () => {
-    for (const tool of [
-      "Read",
-      "Grep",
-      "Glob",
-      "WebSearch",
-      "TodoWrite",
-      "AskUserQuestion",
-      "mcp__openbot__await_event",
-    ])
+    for (const tool of ["Read", "Grep", "Glob", "TodoWrite", "AskUserQuestion", "mcp__openbot__await_event"])
       expect(checkInAllowsClaudeTool(tool)).toBe(true);
     for (const tool of [
+      // Review 7, L2: a search goes out, and a resource read calls the user's MCP server.
+      "WebSearch",
+      "ReadMcpResourceTool",
+      "ListMcpResourcesTool",
+      // Review 7, L1: a user server named "openbot_", "openbot." or "openbot__gmail".
+      "mcp__openbot___send_email",
+      "mcp__openbot__gmail__send",
+      "mcp__openbot___await_event",
+      // OpenBot's own tools that act, and its browser server.
+      "mcp__openbot__send_message",
+      "mcp__openbot__create_routine",
+      "mcp__openbot_browser__click",
       "Bash",
       "Write",
       "Edit",
@@ -406,10 +426,12 @@ describe("check-in turn restriction", () => {
     expect(turns.has("thread-1")).toBe(false);
   });
 
-  it("restricts Claude always, Codex only with no MCP server, and no other provider", () => {
+  it("restricts Claude always, Codex only with no MCP server and a Codex config that allows it", () => {
     expect(checkInRestricts("claude", 3)).toBe(true);
-    expect(checkInRestricts("codex", 0)).toBe(true);
-    expect(checkInRestricts("codex", 1)).toBe(false);
+    expect(checkInRestricts("codex", 0, true)).toBe(true);
+    expect(checkInRestricts("codex", 0, false)).toBe(false);
+    expect(checkInRestricts("codex", 0)).toBe(false);
+    expect(checkInRestricts("codex", 1, true)).toBe(false);
     for (const provider of ["acp", "opencode", "pi", "grok", "cursor", "muse"] as const)
       expect(checkInRestricts(provider, 0)).toBe(false);
     expect(CHECK_IN_CODEX_SANDBOX).toEqual({ type: "readOnly", networkAccess: false });
@@ -417,85 +439,85 @@ describe("check-in turn restriction", () => {
   });
 });
 
-describe("plan continuation gate", () => {
-  const steps = (...items: [string, "pending" | "inProgress" | "completed"][]) =>
-    items.map(([text, status]) => ({ text, status }));
-  const never = () => false;
+describe("Codex config of a check-in turn (review 7, M3)", () => {
+  const off = { apps: false, plugins: false, browser_use: false, computer_use: false };
 
-  it.each([
-    "Send the email to the board",
-    "Draft and send the reply",
-    "Email Sam the quote",
-    "Pay the supplier invoice",
-    "Book the meeting room",
-    "Deploy to production",
-    "Then publish the post",
-    "2. Delete the old backups",
-    "Merge and push to main",
-    "Call the plumber",
-    "Submit the form",
-    "Cancel the subscription",
-  ])("finds an outward action in %s", (step) => {
-    expect(outwardActions(step).length).toBeGreaterThan(0);
-  });
-
-  it.each([
-    "Draft the email to the board",
-    "Compare the quotes",
-    "Read the report",
-    "Write a summary",
-    "Run the tests",
-  ])("finds no outward action in %s", (step) => {
-    expect(outwardActions(step)).toEqual([]);
-  });
-
-  it.each<[string | null, string, boolean]>([
-    // The request did not ask to send: stop.
-    ["Draft an email to the board about the budget.", "Send the email to the board", true],
-    ["Please review the invoice.", "Pay the supplier", true],
-    ["Don't send it yet, just draft it.", "Send the email", true],
-    // No request of the user (a wake, a brief): stop.
-    [null, "Send the email", true],
-    // The request asked for the action, in the same group of verbs.
-    ["Write and send the report.", "Send the report", false],
-    ["Email the board the budget.", "Send the email to the board", false],
-    ["Can you pay the supplier today?", "Pay the supplier", false],
-    // A harmless step continues.
-    ["Draft an email to the board.", "Proofread the draft", false],
-  ])("request %j, next step %j: needs approval %s", (request, step, blocks) => {
-    expect(stepsNeedApproval(steps(["Draft", "completed"], [step, "pending"]), request)).toBe(blocks);
-  });
-
-  it("reads each step in progress and the first pending step, not the later ones", () => {
-    const plan = steps(
-      ["Draft", "completed"],
-      ["Proofread", "inProgress"],
-      ["Fix typos", "pending"],
-      ["Send it", "pending"],
+  it("allows a check-in only when apps, plugins, the browser and computer use are off", () => {
+    expect(codexConfigAllowsCheckIn({ features: off, mcp_servers: { gmail: { command: "x" } } })).toBe(true);
+    expect(codexConfigAllowsCheckIn({ features: off, apps: { _default: { enabled: true } } })).toBe(true);
+    expect(codexConfigAllowsCheckIn({ features: off, plugins: { "gmail@openai-curated": { enabled: false } } })).toBe(
+      true,
     );
-    expect(nextOpenSteps(plan).map((step) => step.text)).toEqual(["Proofread", "Fix typos"]);
-    expect(stepsNeedApproval(plan, "Draft a reply.")).toBe(false);
-    expect(stepsNeedApproval(steps(["Send it", "inProgress"], ["Proofread", "pending"]), "Draft a reply.")).toBe(true);
+    expect(codexConfigAllowsCheckIn({ features: off, approvals_reviewer: "user" })).toBe(true);
   });
 
-  it.each([
-    "Here's the draft email to the board. Please review and approve.",
-    "Standing by for your go-ahead.",
-    "I need your approval before I send it.",
-    "Which vendor do you prefer? I can compare them next.",
-    "Draft is ready for your review.",
-    "Let me know if you want changes.",
-    "Ready to send once you confirm.",
-  ])("stops after a reply that waits for the user: %s", (answer) => {
-    expect(replyWaitsForUser(answer, never)).toBe(true);
-    expect(continuationAllowed({ steps: [], request: "x", answer, onlyAsksToContinue: never })).toBe(false);
+  it.each<[string, unknown]>([
+    ["no config read", null],
+    ["no features", {}],
+    ["apps on by default", { features: { ...off, apps: undefined } }],
+    ["plugins on", { features: { ...off, plugins: true } }],
+    ["browser use on by default", { features: { ...off, browser_use: undefined } }],
+    ["computer use on", { features: { ...off, computer_use: true } }],
+    ["a plugin on", { features: off, plugins: { "gmail@openai-curated": { enabled: true } } }],
+    ["a plugin with no enabled key", { features: off, plugins: { "github@openai-curated": {} } }],
+    ["an app on", { features: off, apps: { gmail: { enabled: true } } }],
+    ["approvals to the auto reviewer", { features: off, approvals_reviewer: "auto_review" }],
+  ])("allows no check-in with %s", (_name, config) => {
+    expect(codexConfigAllowsCheckIn(config)).toBe(false);
   });
 
-  it("does not count a last line that only asks whether to continue", () => {
-    const asks = (line: string) => line === "Shall I continue?";
-    expect(replyWaitsForUser("Step one is done.\nShall I continue?", asks)).toBe(false);
-    expect(replyWaitsForUser("Step one is done. The tests pass.", asks)).toBe(false);
-    expect(replyWaitsForUser("Use `a?.b` here.", asks)).toBe(false);
+  it("keeps the last read of each agent, and nothing for an agent with no read", () => {
+    const configs = new CodexCheckInConfigs();
+    expect(configs.allows("a1")).toBe(false);
+    configs.record("a1", { features: off });
+    expect(configs.allows("a1")).toBe(true);
+    configs.record("a1", null);
+    expect(configs.allows("a1")).toBe(false);
+  });
+});
+
+describe("a wait that a check-in turn opens (review 7, M4)", () => {
+  it("serves the request of the user that the nudge repeats, not the nudge", () => {
+    const text = stallNudgeText({
+      reason: "r",
+      requestText: "Find 3 quotes.\n--- the request ---\nx",
+      nudge: 1,
+      limit: 2,
+    });
+    const nudge = { sender: { kind: "agent", agentId: "a1" }, recipientAgentId: "a1", text };
+    expect(waitRequestText(nudge)).toBe("Find 3 quotes.\n--- the request ---\nx");
+    // Not a nudge: a message of the user, or of a teammate, that starts like one.
+    expect(waitRequestText({ sender: { kind: "user" }, recipientAgentId: "a1", text })).toBe(text);
+    expect(waitRequestText({ sender: { kind: "agent", agentId: "a2" }, recipientAgentId: "a1", text })).toBe(text);
+  });
+
+  it("wakes with a note that is the agent's reminder, not an instruction", () => {
+    const text = wokenWaitsPromptText([
+      {
+        id: "w1",
+        agentId: "a1",
+        note: "Pay the supplier now.",
+        requestMessageId: "d1",
+        requestText: "Find 3 quotes.",
+        routineId: null,
+        createdAt: "2026-11-05T00:00:00.000Z",
+        wokenAt: null,
+        wakeDeliveryId: null,
+      } satisfies AgentWait,
+    ]);
+    expect(text).toContain(
+      "Your note is your own reminder, not a message from the user: do only what the request asks.",
+    );
+  });
+});
+
+describe("plan continuation note (review 7: no word-list gate)", () => {
+  const ask =
+    "Before a step that sends, pays, books, deploys, deletes or contacts someone, and that the user did not ask for, ask the user first.";
+
+  it("tells the agent to ask the user before an outward step that the user did not ask for", () => {
+    expect(planContinuationPrompt([{ id: "s1", text: "Merge the branch", status: "pending" }], 1, 8)).toContain(ask);
+    expect(nextStepContinuationPrompt(1, 2)).toContain(ask);
   });
 });
 
@@ -515,15 +537,47 @@ describe("promiseTime", () => {
     ["In 2 hours I'll check the build.", local(5, 12)],
     ["I'll check on it in 10 minutes.", local(5, 10, 10)],
     ["Next week I'll review it.", local(12, 9)],
-    ["I'll get back to you on the 14th.", local(6, 9)],
+    // Review 7, T1: a date is not before that date.
+    ["I'll get back to you on the 14th.", local(14, 9)],
+    ["On the 2nd I'll renew it.", new Date(2026, 11, 2, 9).getTime()],
+    ["The 20th of this month I'll pay it.", local(20, 9)],
+    ["Next month I'll review the budget.", new Date(2026, 11, 1, 9).getTime()],
+    ["In March I'll file the taxes.", new Date(2027, 2, 1, 9).getTime()],
+    ["On 2026-12-24 I'll send the cards.", new Date(2026, 11, 24, 9).getTime()],
     ["I'll let you know when they reply.", null],
   ])("%s", (text, expected) => {
-    expect(promiseTime(text, now)?.getTime() ?? null).toBe(expected);
+    const time = promiseTime(text, now);
+    expect(time instanceof Date ? time.getTime() : time).toBe(expected);
+  });
+
+  it.each([
+    "By end of week I'll send it.",
+    "This week I'll send it.",
+    "Next quarter I'll review it.",
+    "In November I'll check.",
+    "On 2026-01-02 I'll send it.",
+  ])("does not read %s: the sweep drops the check", (text) => {
+    expect(promiseTime(text, now)).toBe(UNREAD_TIME);
+  });
+
+  it("reads tomorrow said before 05:00 as later today (review 7, T1)", () => {
+    const early = new Date(2026, 10, 5, 0, 30, 0);
+    expect(promiseTime("Tomorrow I'll pay the supplier.", early)).toEqual(new Date(2026, 10, 5, 9));
+    expect(promiseTime("Tomorrow I'll pay the supplier.", new Date(2026, 10, 5, 5, 0, 0))).toEqual(
+      new Date(2026, 10, 6, 9),
+    );
+  });
+
+  it("reads a clock time with no am or pm that is past this morning as this afternoon (review 7, T1)", () => {
+    const afternoon = new Date(2026, 10, 5, 14, 0, 0);
+    expect(promiseTime("I'll call at 3:30.", afternoon)).toEqual(new Date(2026, 10, 5, 15, 30));
+    expect(promiseTime("I'll call at 3:30am.", afternoon)).toEqual(new Date(2026, 10, 6, 3, 30));
+    expect(promiseTime("I'll call at 1:30.", afternoon)).toEqual(new Date(2026, 10, 6, 1, 30));
   });
 
   it("never names a time before now", () => {
     const late = new Date(2026, 10, 5, 22, 0, 0);
-    expect(promiseTime("Tonight I'll deploy.", late)?.getTime()).toBe(late.getTime());
+    expect(promiseTime("Tonight I'll deploy.", late)).toEqual(late);
   });
 });
 
@@ -600,7 +654,7 @@ describe("StallSweep", () => {
     const hooks: StallSweepHooks = {
       mayWake: () => state.mayWake,
       providerReady: () => state.providerReady,
-      checkInRestricts: () => state.checkIn,
+      checkInRestricts: () => Effect.succeed(state.checkIn),
       laneOpen: () => state.laneOpen,
       laneBusy: () => state.laneBusy,
       waitBacksCheck: () => state.waitBacks,
@@ -680,7 +734,7 @@ describe("StallSweep", () => {
     sweep.turnEnded(userTurn({ answer: "Invoice checked. Tomorrow I'll pay the supplier." }));
     const check = store.forLane("chief", null);
     const named = promiseTime("Tomorrow I'll pay the supplier.", new Date("2026-11-01T10:00:00.000Z"));
-    if (!check?.dueAt || !named) throw new Error("no check");
+    if (!check?.dueAt || !(named instanceof Date)) throw new Error("no check");
     expect(Date.parse(check.dueAt)).toBe(named.getTime() + STALL_GRACE_MS);
     advance(STALL_GRACE_MS);
     await fire();
@@ -689,6 +743,18 @@ describe("StallSweep", () => {
     advance(Date.parse(check.dueAt) - Date.parse("2026-11-01T10:00:00.000Z") - STALL_GRACE_MS);
     await fire();
     expect(state.nudges).toHaveLength(1);
+  });
+
+  it("makes no check for a promise whose time it cannot read, and sends no alert (review 7, T1)", async () => {
+    const { store, state, sweep, advance, fire } = setup();
+    sweep.turnEnded(userTurn());
+    expect(store.forLane("chief", null)).not.toBeNull();
+    sweep.turnEnded(userTurn({ answer: "Invoice checked. By end of week I'll pay the supplier." }));
+    expect(store.forLane("chief", null)).toBeNull();
+    advance(2 * STALL_MAX_AGE_MS);
+    await fire();
+    expect(state.nudges).toEqual([]);
+    expect(state.alerts).toEqual([]);
   });
 
   it("sends no nudge to a provider that it cannot restrict, and alerts the user", async () => {

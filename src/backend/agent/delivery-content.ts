@@ -14,6 +14,7 @@ import { redactText } from "@openbot/logging";
 import { AWAIT_EVENT_TOOL, wokenWaitsPromptText } from "../agent-waits/agent-waits";
 import { homeSkillRoot, homeSkillTagSlug } from "../home-skills";
 import type { DeliveryContext } from "../mailbox-store";
+import { STALL_NUDGE_HEADER, STALL_NUDGE_REQUEST_LINE } from "../stall-sweep/check-in-turns";
 import { quietRoutineRun, ROUTINE_NO_UPDATE_TOOL, ROUTINE_REPORT_FAILURE_TOOL } from "./routine-quiet-runs";
 
 export function responseAttachmentMessageId(threadId: string, turnId: string, callId: string): string {
@@ -185,8 +186,6 @@ export function isWaitWakeDelivery(
   );
 }
 
-/** The first line of a stall nudge (`StallSweep`). It tells a nudge from the wake of timed waits. */
-export const STALL_NUDGE_HEADER = "OpenBot check: your last turn ended with work still open.";
 /** The most characters of the request that a stall check keeps and its nudge repeats. */
 export const STALL_NUDGE_REQUEST_MAX = 2000;
 
@@ -206,17 +205,16 @@ export function stallNudgeText(input: { reason: string; requestText: string; nud
     STALL_NUDGE_HEADER,
     "This is not a message from the user or from a teammate.",
     `Reason: ${input.reason}`,
-    "This turn is a check-in only. You cannot act in it. Report status, open a wait, make a routine, or ask the user. OpenBot refuses every other tool call of this turn.",
+    "This turn is a check-in only. You cannot act in it. Report status, open or close your own wait, ask the user, or read. OpenBot refuses every other tool call of this turn.",
     'First: if you wait for the user\'s answer or approval, say so in one line ("I am waiting for your answer.") and stop. Do nothing more.',
     "Do not try a send, a booking, a payment, a deploy, a delete or any other action in this turn.",
     "Only if you do not wait for the user, do one of these now:",
     "- Tell the user the state of the work in a few lines.",
     `- Open a wait with openbot.${AWAIT_EVENT_TOOL} and wakeAfterMinutes for the thing that you wait for. If you said that you would do something at a later time, give that time.`,
-    "- Make or change a routine with openbot.create_routine or openbot.update_routine for repeated work.",
     "- Ask the user with openbot.ask_user if only the user can unblock it.",
     "- If the work is done, mark the plan steps completed, report it to the user and say that it is done.",
     `This is check ${input.nudge} of ${input.limit}. After the last check, OpenBot tells the user that the work stopped.`,
-    "--- the request ---",
+    STALL_NUDGE_REQUEST_LINE,
     requestText,
   ].join("\n");
 }
@@ -395,6 +393,8 @@ export function planContinuationPrompt(
       : []),
     ...steps.map((step) => `- [${step.status === "inProgress" ? "in progress" : "pending"}] ${step.text}`),
     "Continue the work now, from where you stopped. Do not repeat finished work or restate the plan. Keep the plan current and mark each step done when you finish it. If a step is already done, mark it done; if it no longer applies, remove it. Do not ask whether to continue. This note does not approve a risky action. If you must wait, need the user's input or approval, or are blocked, say so in one short line and end your turn.",
+    // Fork: the agent, not a word list, decides which step needs the user (`FORK.md`).
+    "Before a step that sends, pays, books, deploys, deletes or contacts someone, and that the user did not ask for, ask the user first.",
     `Automatic continuation ${count} of ${limit}.`,
   ].join("\n");
 }
@@ -411,6 +411,7 @@ export function nextStepContinuationPrompt(count: number, limit: number): string
   return [
     "OpenBot note, not a message from the user. Your last turn ended before the next step: you named the step or asked whether to continue, but you did not do it.",
     "Do the next step now, and continue until the request is done. Do not repeat finished work or restate earlier answers. Do not ask whether to continue. This note does not approve a risky action. If the request is already done, say so in one short line and end your turn. If you must wait, need the user's input or approval, or are blocked, say so in one short line and end your turn.",
+    "Before a step that sends, pays, books, deploys, deletes or contacts someone, and that the user did not ask for, ask the user first.",
     `Automatic continuation ${count} of ${limit}.`,
   ].join("\n");
 }

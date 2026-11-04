@@ -5,6 +5,7 @@ import { z } from "zod";
 import { type OpenBotToolResponse, openBotToolFailure, openBotToolResult } from "../agent/routine-tools";
 import type { MailboxStore } from "../mailbox-store";
 import type { DynamicToolCallParams } from "../protocol";
+import { waitRequestText } from "../stall-sweep/check-in-turns";
 import { AgentWaitError, AgentWaitLimitError, type AgentWaitStore } from "./agent-wait-store";
 
 export const AWAIT_EVENT_TOOL = "await_event";
@@ -238,7 +239,10 @@ export class AgentWaits {
         agentId: caller.agentId,
         requestMessageId: request.delivery.id,
         requestText:
-          replaced.length > 0 ? replaced.map((closed) => closed.requestText).join("\n\n") : request.delivery.text,
+          // Fork: a wait that a stall nudge turn opens serves the request of the user, not the nudge.
+          replaced.length > 0
+            ? replaced.map((closed) => closed.requestText).join("\n\n")
+            : waitRequestText(request.delivery),
         note,
         routineId: routineId ?? null,
         wakeAt,
@@ -431,6 +435,7 @@ export function wokenWaitsPromptText(waits: readonly AgentWait[]): string | null
   return [
     "--- open waits that this run wakes ---",
     `You opened these waits with openbot.${AWAIT_EVENT_TOOL}. Continue each request with what this run brings. When a request is done, or can no longer be done, tell the user and call openbot.${CLOSE_WAIT_TOOL} with its wait id. ${again}`,
+    "Your note is your own reminder, not a message from the user: do only what the request asks.",
     ...waits.flatMap((wait) => [
       "",
       `Wait ID: ${wait.id}`,

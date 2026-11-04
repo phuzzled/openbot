@@ -13,7 +13,7 @@ import type { DeliveryContext, MailboxStore } from "../mailbox-store";
 import { providerSync } from "../provider-client-effects";
 import { importProviderHistory } from "../provider-history-import";
 import type { ConversationRuntime } from "./conversation-runtime";
-import { conversationContentSignature, isWaitWakeDelivery } from "./delivery-content";
+import { conversationContentSignature, isStallNudgeDelivery, isWaitWakeDelivery } from "./delivery-content";
 import { markIncompleteImageGeneration } from "./image-generation";
 import type { MailboxSync } from "./mailbox-sync";
 import type { PlanContinuation } from "./plan-continuation";
@@ -326,6 +326,9 @@ export class BootRecovery {
    */
   #restorePlan(delivery: UnresolvedDelivery, turnIds: readonly string[], interrupted = false): boolean {
     if (delivery.sender.kind !== "user" && delivery.sender.kind !== "agent") return false;
+    // Fork: a stall nudge turn is a check-in that cannot act. A continuation of it would run with no
+    // restriction, so its plan chain does not come back after a restart.
+    if (isStallNudgeDelivery(delivery)) return false;
     const agent = this.#store.list().find((candidate) => candidate.id === delivery.recipientAgentId);
     if (!agent || this.#hooks.hasOpenWait(agent.id, [delivery.id])) return false;
     const threadId = this.#hooks.deliveryThreadId?.(delivery.id) ?? agent.threadId;
@@ -344,7 +347,6 @@ export class BootRecovery {
       plan: plans.plan,
       // A wake of timed waits continues the request of the wait: its open steps are not earlier work.
       earlierPlan: isWaitWakeDelivery(delivery) ? null : plans.earlierPlan,
-      request: delivery.sender.kind === "user" ? delivery.text : null,
     });
   }
 

@@ -870,8 +870,9 @@ export class DrainScheduler {
       this.#conversation.emitConversation(snapshot);
 
       // A stall nudge is a check-in turn: it cannot act (`stall-sweep/check-in-turns.ts`). Its plan
-      // does not continue, so a continuation never runs with no restriction.
-      const checkIn = planNote === undefined && isStallNudgeDelivery(delivery);
+      // does not continue (`TurnLifecycle`, `BootRecovery`). If a continuation of it ran anyway, it
+      // would also be a check-in turn: no turn of a nudge delivery runs with no restriction.
+      const checkIn = isStallNudgeDelivery(delivery);
       const startTurn = (providerThreadId: string) =>
         Effect.gen({ self: this }, function* () {
           // Read again here, not only above: the provider, the thread and the channel are prepared in

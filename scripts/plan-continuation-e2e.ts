@@ -7,6 +7,8 @@
 // of its thread.
 // Checks:
 //   1. A turn with open steps continues once, and the request completes when the plan is done.
+//   1a. Ordinary coding steps ("Merge the branch", "Remove the old file", "Push the branch") continue,
+//       and the note tells the agent to ask the user before an outward action that the user did not ask for.
 //   2. A request continues at most 8 times.
 //   3. A continuation that does not change the open steps stops the chain.
 //   4. An answer whose last line asks a question does not continue. A question about a named action
@@ -408,6 +410,43 @@ try {
       "The first answer and the line show between the request and the continuation's answer.",
     );
     return { turns: turns.length, line: continuationLines(agent.id)[0]?.id, shown };
+  });
+
+  await check("ordinary coding steps continue, also merge, remove, delete and push", async () => {
+    const agent = await createAgent("Coder");
+    const mark = loggedTurns().length;
+    const steps = (done: number): [string, StepStatus][] =>
+      [
+        "Refactor the parser",
+        "Merge the branch",
+        "Remove the old file",
+        "Delete the temporary fixtures",
+        "Push the branch",
+      ].map((step, index) => [step, index < done ? "completed" : "pending"]);
+    const id = await send(
+      agent.id,
+      `Refactor the parser module and get the tests green. ${plan(
+        { steps: steps(1), answer: "Refactored the parser. Tests confirmed passing." },
+        { steps: steps(2), answer: "Merged the branch." },
+        { steps: steps(3), answer: "Removed the old file." },
+        { steps: steps(4), answer: "Deleted the temporary fixtures." },
+        { steps: steps(5), answer: "Pushed the branch." },
+      )}`,
+    );
+    assert.equal(await settled(id), "completed");
+    const turns = turnsSince(mark);
+    assert.deepEqual(
+      turns.map((turn) => turn.note),
+      [false, true, true, true, true],
+      "Each open step continues.",
+    );
+    const note = turns[1]?.text ?? "";
+    assert.ok(note.includes("[pending] Merge the branch"), "The note names the next step.");
+    assert.ok(
+      note.includes("Before a step that sends, pays, books, deploys, deletes or contacts someone"),
+      "The note tells the agent to ask before an action that the user did not ask for.",
+    );
+    return { turns: turns.length };
   });
 
   await check("a request continues at most 8 times", async () => {
@@ -1049,11 +1088,9 @@ try {
   await check("a restart during a turn with open steps queues exactly one continuation", async () => {
     const agent = await createAgent("Interrupted");
     const mark = loggedTurns().length;
-    // The request names the merge: a restored chain toward an outward step ("Merge") that the request
-    // did not name stops (`stall-sweep/continuation-gate.ts`).
     const id = await send(
       agent.id,
-      `Sync and merge it. ${plan({
+      `Sync it. ${plan({
         steps: [
           ["Fetch", "completed"],
           ["Merge", "inProgress"],
