@@ -43,7 +43,7 @@ import {
   toMcpShapeFailed,
   usableMcpServers,
 } from "../mcp-provider-shapes";
-import { decodeRecordResponse, decodeThreadResponse, getString, type ResponseDecoder } from "../protocol";
+import { decodeRecordResponse, decodeThreadResponse, getRecord, getString, type ResponseDecoder } from "../protocol";
 import { TimeoutError, withTimeout } from "../with-timeout";
 import type { AgentMemories } from "./agent-memories";
 import { readCodexMcpConfig } from "./codex-mcp-config";
@@ -166,6 +166,11 @@ export interface ThreadLifecycleHooks {
   reportMcpDrops(provider: AgentProvider, drops: readonly McpServerDrop[]): void;
   /** An earlier session whose work steps could not be read. The handoff goes without them. */
   logHandoffReadFailure(provider: AgentProvider, error: unknown): void;
+  /**
+   * Fork: the effective Codex config of the agent's Codex process, read at each start and resume of a
+   * session, or null when the read failed. The stall sweep reads it (`CodexCheckInConfigs`).
+   */
+  codexConfigRead?(agentId: string, config: unknown): void;
 }
 
 export interface ThreadLifecycleOptions {
@@ -657,7 +662,7 @@ export class ThreadLifecycle {
     const toolRuntimes = this.#toolRuntimes();
     // The same reading rule as above, and for the same reason: the manifest has to record the set
     // this session was started with, including the names swept out of the provider's own file.
-    const own = yield* this.codexOwnServersEffect(client, mcpServers, toolRuntimes);
+    const own = yield* this.codexOwnServersEffect(client, mcpServers, toolRuntimes, agent.id);
     // The same single reading, so the manifest records the variables this session was started with.
     const environment = this.#agentEnvironment();
     // The same single reading, so the manifest records the section-mates these instructions name.
@@ -921,12 +926,24 @@ export class ThreadLifecycle {
     client: AgentClient,
     configs: readonly McpServerConfig[],
     toolRuntimes: McpToolRuntimes,
+    agentId?: string,
   ): Effect.fn.Return<CodexOwnServers, ThreadOperationFailed> {
     if (client.provider !== "codex") return NO_CODEX_OWN_SERVERS;
     // Register only the servers selected by the runtime adapter, including name collisions.
     const usable = yield* usableMcpServers(configs, toolRuntimes).pipe(toThreadOperationFailed);
     const servers = (own: CodexOwnTransports) => codexMcpServers(usable, own).servers;
-    return yield* codexDisabledServers(() => readCodexMcpConfig(client, servers).pipe(toMcpShapeFailed)).pipe(
+    // Fork: the stall sweep reads the effective config, or null when the read failed.
+    const configRead = (config: unknown) =>
+      Effect.sync(() => {
+        if (agentId) this.#hooks.codexConfigRead?.(agentId, config);
+      });
+    const read = () =>
+      readCodexMcpConfig(client, servers).pipe(
+        Effect.tap((response) => configRead(getRecord(response, "config"))),
+        Effect.tapError(() => configRead(null)),
+        toMcpShapeFailed,
+      );
+    return yield* codexDisabledServers(read).pipe(
       Effect.catch((failure) => {
         if (Object.keys(servers({})).length === 0) return Effect.succeed(NO_CODEX_OWN_SERVERS);
         if (isProviderTimeout(failure.cause) || !client.running) {
@@ -1128,7 +1145,7 @@ export class ThreadLifecycle {
     yield* checkAgentFolders(agent);
     const configs = this.#agentMcpServers(agent);
     const toolRuntimes = this.#toolRuntimes();
-    const own = yield* this.codexOwnServersEffect(client, configs, toolRuntimes);
+    const own = yield* this.codexOwnServersEffect(client, configs, toolRuntimes, agent.id);
     const proxy = yield* this.#proxyFingerprint(configs);
     const environment = this.#agentEnvironment();
     const section = this.#sectionTeammates(agent.id);
@@ -1292,7 +1309,7 @@ export class ThreadLifecycle {
         agent,
         client,
         configs,
-        yield* this.codexOwnServersEffect(client, configs, toolRuntimes),
+        yield* this.codexOwnServersEffect(client, configs, toolRuntimes, agent.id),
         toolRuntimes,
         this.#agentEnvironment(),
       )),

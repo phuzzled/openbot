@@ -1,5 +1,4 @@
 import type { ConversationPlan, ConversationPlanStep } from "@openbot/contracts/ipc";
-import { continuationAllowed, stepsNeedApproval } from "../stall-sweep/continuation-gate";
 import { nextStepContinuationPrompt, planContinuationPrompt } from "./delivery-content";
 
 export interface PlanContinuationOptions {
@@ -136,11 +135,6 @@ export class PlanContinuation {
     earlierPlan: ConversationPlan | null;
     /** The answer of that turn. */
     answer: string | undefined;
-    /**
-     * The text of the user's message that started the request, or null when no message of the user
-     * did. The fork's gate (`continuationAllowed`) reads it: an outward next step needs it.
-     */
-    request?: string | null;
   }): ({ kind: ContinuationKind } & ContinuationCount) | null {
     const key = laneKey(input.agentId, input.taskId);
     const previous = this.#chains.get(key);
@@ -167,17 +161,6 @@ export class PlanContinuation {
       kind = "plan";
     } else if (nextSteps < NEXT_STEP_LIMIT && stoppedBeforeNextStep(input.answer)) kind = "nextStep";
     else return null;
-    // Fork: no continuation toward an outward step that the request did not name, or after an answer
-    // that asks the user or names an approval (`stall-sweep/continuation-gate.ts`).
-    if (
-      !continuationAllowed({
-        steps: open,
-        request: input.request ?? null,
-        answer: input.answer,
-        onlyAsksToContinue: (line) => ASKS_TO_CONTINUE.test(line),
-      })
-    )
-      return null;
     const shown =
       kind === "plan"
         ? { current: count + 1, limit: this.#limit }
@@ -210,8 +193,6 @@ export class PlanContinuation {
     turnIds: readonly string[];
     plan: ConversationPlan | null;
     earlierPlan: ConversationPlan | null;
-    /** The text of the user's message of the request, or null: see `consider`. */
-    request?: string | null;
   }): boolean {
     const key = laneKey(input.agentId, input.taskId);
     const lastTurnId = input.turnIds.at(-1);
@@ -227,8 +208,6 @@ export class PlanContinuation {
     );
     const open = openSteps(input.plan, earlierSteps);
     if (open.length === 0) return false;
-    // Fork: no restored chain toward an outward step that the request did not name.
-    if (stepsNeedApproval(open, input.request ?? null)) return false;
     this.#chains.set(key, {
       deliveryIds: new Set(input.deliveryIds),
       count,

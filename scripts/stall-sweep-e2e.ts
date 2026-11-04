@@ -26,8 +26,12 @@
 //        It can still open a wait.
 //   S19  "Please review and approve." with an open "Send the email" step: no plan continuation, no
 //        check and no nudge.
-//   S20  "Tomorrow I'll pay the supplier.": the check is due after tomorrow 09:00 local, not in 15
-//        minutes, and no nudge comes before then.
+//   S20  "Tomorrow I'll pay the supplier.": the check is due after tomorrow 09:00 local (today 09:00
+//        before 05:00), not in 15 minutes, and no nudge comes before then.
+//   S21  A nudge turn calls create_routine and update_routine: both are refused, and no routine exists.
+//   S22  A restart during a nudge turn with open plan steps: no continuation runs after the restart.
+//   S23  A Codex agent whose Codex config turns on a plugin: no nudge, and the alert line.
+//   S24  A wait that a nudge turn opens keeps the request of the user, not the text of the nudge.
 // No provider, account or network is used. `bun run test:stall-sweep`. `ONLY=S1,S5` runs some.
 // Writes .openbot-build/stall-sweep-e2e/report.json.
 import assert from "node:assert/strict";
@@ -46,6 +50,7 @@ const userData = join(root, "user-data");
 const home = join(root, "home");
 const fakeCodex = join(root, "codex");
 const fakeLog = join(root, "codex.jsonl");
+const fakeConfig = join(root, "codex-config.json");
 const NOTE_MARKER = "OpenBot note, not a message from the user";
 const NUDGE_HEADER = "OpenBot check: your last turn ended with work still open.";
 
@@ -70,7 +75,7 @@ interface FakeTurn {
   delayMs?: number;
   /** Sends the plan when the turn starts, as well as at its end. */
   planEarly?: boolean;
-  calls?: { tool: string; arguments: Record<string, string | number | boolean | string[]> }[];
+  calls?: { tool: string; arguments: Record<string, string | number | boolean | string[] | Record<string, string>> }[];
 }
 
 // "<" and ">" are escaped, so a plan in a message that a turn sends does not end the plan around it.
@@ -91,7 +96,15 @@ const NOTE = ${JSON.stringify(NOTE_MARKER)};
 const NUDGE = ${JSON.stringify(NUDGE_HEADER)};
 /** How many nudges of each request the fake has seen, by the text of its nudge scripts. */
 const nudgeCounts = new Map();
-const config = { config: { mcp_servers: {} }, layers: [{ name: { type: "user", file: "/fake/.codex/config.toml", profile: null }, version: "1", config: { mcp_servers: {} } }] };
+// The effective Codex config: apps, plugins, the browser and computer use are off, so a nudge can run.
+// A case writes CONFIG_FILE to change it; the fake reads the file at each config/read.
+const CONFIG_FILE = ${JSON.stringify(fakeConfig)};
+const OFF = { apps: false, plugins: false, browser_use: false, computer_use: false };
+const readConfig = () => {
+  let own = { mcp_servers: {}, features: OFF };
+  try { own = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); } catch {}
+  return { config: own, layers: [{ name: { type: "user", file: "/fake/.codex/config.toml", profile: null }, version: "1", config: own }] };
+};
 let buffer = "";
 let threads = 0;
 let turns = 0;
@@ -135,7 +148,7 @@ const answer = (message) => {
     case "account/rateLimits/read": return write({ id: message.id, result: { rateLimits: { limitId: "codex", primary: null, secondary: null }, rateLimitsByLimitId: null } });
     case "model/list": return write({ id: message.id, result: { data: [{ model: "gpt-6-luna", displayName: "GPT-6 Luna" }] } });
     case "plugin/list": return write({ id: message.id, result: { marketplaces: [] } });
-    case "config/read": return write({ id: message.id, result: config });
+    case "config/read": return write({ id: message.id, result: readConfig() });
     case "config/batchWrite": return write({ id: message.id, result: {} });
     // With the process id, so a fake that runs after a restart does not reuse an earlier session id.
     case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + process.pid + "-" + (++threads), turns: [] } } });
@@ -1037,8 +1050,9 @@ try {
     assert.equal(await settled(id), "completed");
     const [check] = checks(agent.id);
     assert.ok(check?.dueAt, "the promise has a check");
+    // Said before 05:00, "tomorrow" is the coming day: today (review 7, T1).
     const tomorrowNine = new Date(Date.parse(check.createdAt));
-    tomorrowNine.setDate(tomorrowNine.getDate() + 1);
+    if (tomorrowNine.getHours() >= 5) tomorrowNine.setDate(tomorrowNine.getDate() + 1);
     tomorrowNine.setHours(9, 0, 0, 0);
     assert.ok(
       Date.parse(check.dueAt) >= tomorrowNine.getTime() + 15 * 60_000,
@@ -1049,6 +1063,147 @@ try {
     assert.equal(nudgeTurns(mark).length, 0, "no nudge before tomorrow");
     assert.equal(checks(agent.id).length, 1, "the check waits");
     return { dueAt: check.dueAt, nudges: 0 };
+  });
+
+  // S21: review 7, H1 (probe Q1). A nudge turn cannot make or change a routine: a routine runs later as
+  // a normal turn, with no restriction.
+  await probe("S21 a nudge turn cannot make or change a routine", async () => {
+    const agent = await createAgent("Scheduler");
+    const target = await createAgent("Victim");
+    const mark = loggedTurns().length;
+    const at = new Date(Date.now() + 2 * 60_000);
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const schedule = {
+      kind: "once",
+      date: `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`,
+      time: `${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`,
+    };
+    const id = await send(
+      agent.id,
+      `${REQUEST} ${plan(promiseTurn)} ${nudges([
+        {
+          steps: [],
+          calls: [
+            {
+              tool: "create_routine",
+              arguments: {
+                agentId: target.id,
+                name: "Pay now",
+                instruction: "Send the payment email to the supplier now.",
+                schedule,
+                timezone: "UTC",
+              },
+            },
+            { tool: "update_routine", arguments: { routineId: "nonexistent", active: true } },
+          ],
+          answer: "I could not make a routine.",
+        },
+      ])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    await fireAndSettle(agent.id, mark, 1);
+    const [nudge] = nudgeTurns(mark);
+    assert.ok(nudge, "the nudge turn ran");
+    assert.ok(!nudge.text.includes("openbot.create_routine"), "the nudge does not suggest a routine");
+    const results = loggedEntries()
+      .filter((entry) => entry.method === "toolResult" && entry.turnId === nudge.turnId)
+      .map((entry) => JSON.stringify(entry.result));
+    assert.equal(results.length, 2, "the fake got 2 answers");
+    for (const result of results) assert.ok(result.includes("This turn is a check-in only"), `refused: ${result}`);
+    assert.deepEqual(current.service.listRoutines(target.id), [], "the other agent has no routine");
+    assert.deepEqual(current.service.listRoutines(agent.id), [], "the agent has no routine");
+    return { refused: results.length };
+  });
+
+  // S22: review 7, M2 (probe Q4). A restart during a nudge turn with open plan steps: no continuation.
+  await probe("S22 a restart during a nudge turn: no continuation after the restart", async () => {
+    const agent = await createAgent("Restarter");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `${REQUEST} ${plan(promiseTurn)} ${nudges([
+        {
+          steps: [
+            ["Collect quotes", "completed"],
+            ["Compare the quotes", "pending"],
+          ],
+          planEarly: true,
+          delayMs: 60_000,
+        },
+      ])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    makeDue(agent.id);
+    await arm();
+    await waitFor("the nudge turn to run", () => nudgeTurns(mark).length >= 1);
+    await sleep(500);
+    await restart();
+    await sleep(4_000);
+    const continued = turnsSince(mark).filter((turn) => turn.note);
+    assert.deepEqual(
+      continued.map((turn) => ({ approvalPolicy: turn.approvalPolicy, sandboxPolicy: turn.sandboxPolicy })),
+      [],
+      "no continuation turn after the restart",
+    );
+    assert.equal(nudgeTurns(mark).length, 1, "the nudge did not run again");
+    return { continued: continued.length };
+  });
+
+  // S23: review 7, M3. A Codex agent whose own Codex config turns on a plugin gets no nudge: a plugin
+  // tool runs outside the sandbox. The user gets the alert line.
+  await probe("S23 a Codex config with a plugin on: no nudge, the alert line", async () => {
+    await writeFile(
+      fakeConfig,
+      JSON.stringify({
+        mcp_servers: {},
+        features: { apps: false, plugins: false, browser_use: false, computer_use: false },
+        plugins: { "gmail@openai-curated": { enabled: true } },
+      }),
+    );
+    try {
+      const agent = await createAgent("Plugged");
+      const mark = loggedTurns().length;
+      const id = await send(
+        agent.id,
+        `${REQUEST} ${plan(promiseTurn)} ${nudges([{ steps: [], answer: "NOT REACHED" }])}`,
+      );
+      assert.equal(await settled(id), "completed");
+      assert.equal(checks(agent.id).length, 1, "the promise has a check");
+      await fireAndSettle(agent.id, mark, 0);
+      assert.equal(nudgeTurns(mark).length, 0, "no nudge");
+      assert.equal(alerts(agent.id).length, 1, "one alert line");
+      assert.deepEqual(checks(agent.id), [], "the check ends");
+      return { nudges: 0, alerts: alerts(agent.id).length };
+    } finally {
+      await rm(fakeConfig, { force: true });
+    }
+  });
+
+  // S24: review 7, M4. A wait that a nudge turn opens keeps the request of the user, not the text of
+  // the nudge, so its wake gets no instruction that the user did not give.
+  await probe("S24 a wait opened in a nudge turn keeps the request of the user", async () => {
+    const agent = await createAgent("Waiter");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `${REQUEST} ${plan(promiseTurn)} ${nudges([
+        {
+          steps: [],
+          calls: [{ tool: "await_event", arguments: { note: "Check vendor replies.", wakeAfterMinutes: 120 } }],
+          answer: "I opened a wait.",
+        },
+      ])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    await fireAndSettle(agent.id, mark, 1);
+    const [wait] = current.service.listWaits(agent.id).waits;
+    assert.ok(wait, "the nudge turn opened a wait");
+    assert.ok(
+      !wait.requestText.includes(NUDGE_HEADER),
+      `no nudge text in the request: ${wait.requestText.slice(0, 200)}`,
+    );
+    assert.ok(wait.requestText.startsWith(REQUEST), "the request of the user");
+    return { requestText: wait.requestText.slice(0, 60) };
   });
 
   report.checks.push(...results.map((r) => ({ name: r.name, passed: r.ok, detail: r.detail })));

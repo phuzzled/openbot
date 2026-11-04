@@ -1314,7 +1314,6 @@ export class TurnLifecycle {
                   (message) => message.itemType === CONVERSATION_PLAN_ITEM_TYPE && message.turnId !== turnId,
                 )?.plan ?? null),
             answer: latestAssistant?.text,
-            request: deliveries.find(({ delivery }) => delivery.sender.kind === "user")?.delivery.text ?? null,
           })
         : null;
       if (!continuation) this.#planContinuation.cancel(agentId, laneTaskId);

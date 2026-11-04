@@ -420,7 +420,15 @@ export class OpenBotToolRouter {
               );
             return;
           }
-          if (checkIn && !checkInAllowsOpenBotTool(params.namespace, params.tool)) {
+          if (
+            checkIn &&
+            !checkInAllowsOpenBotTool(
+              params.namespace,
+              params.tool,
+              params.arguments,
+              this.#conversation.agentForThread(params.threadId),
+            )
+          ) {
             client.respond(request.id, openBotToolFailure(CHECK_IN_REFUSAL));
             return;
           }
