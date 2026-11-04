@@ -461,6 +461,37 @@ export class TurnLifecycle {
     return this.#endedTurns.has(turnId);
   }
 
+  /**
+   * Gives the result of a plan continuation chain that ended before its next turn (`endPlanContinuation`):
+   * the delivery is settled, and its last turn kept the result for the turn that does not come now. As
+   * that turn would, it relays the latest answer to a teammate that asked for one, puts it in the
+   * routine digest of a routine run, and lets the asking agent take its other answers. Each relay is
+   * keyed by the turn, so it happens once. `snapshot` is the conversation of the delivery, or undefined
+   * when it cannot be read: then only the asking agent is released. A failure is reported, not raised.
+   */
+  readonly planChainEnded = Effect.fn("TurnLifecycle.planChainEnded")(function* (
+    this: TurnLifecycle,
+    agentId: string,
+    deliveryId: string,
+    snapshot: ConversationSnapshot | undefined,
+  ) {
+    const context = this.#mailbox.getDelivery(deliveryId);
+    if (!context) return;
+    const { delivery } = context;
+    const turnId = delivery.turnId;
+    const answer = snapshot && turnId ? latestTurnAnswer(snapshot.messages, turnId) : undefined;
+    if (snapshot && turnId && answer && delivery.status === "completed") {
+      if (delivery.sender.kind === "routine") yield* this.#hooks.routineAnswered(agentId, deliveryId, answer.text);
+      else if (!this.#conversation.isExecutionThread(snapshot.threadId))
+        yield* this.#relayAgentResult(agentId, turnId, context, answer.text).pipe(
+          Effect.catch((failure) =>
+            Effect.sync(() => this.#hooks.emitError("agent_result_relay_failed", failure, agentId)),
+          ),
+        );
+    }
+    if (delivery.sender.kind === "agent") this.#hooks.scheduleDrain(delivery.sender.agentId);
+  });
+
   /** A turn id that starts again, as a requeued delivery's does, has not ended. */
   forgetEnded(turnId: string): void {
     this.#endedTurns.delete(turnId);

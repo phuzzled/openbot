@@ -20,6 +20,7 @@
 //   7. A message that waits in the queue stops the continuation and runs next.
 //   8. A side thread continues in its own thread only.
 //   8a. A turn that a teammate's message started continues; the teammate gets one result.
+//   8b. A Stop before that continuation starts still gives the teammate one result.
 //   9. A routine run continues in its own session, and its run ends once with the last answer.
 //  10. A restart while a continuation waits runs that continuation once, with a note about the restart.
 //  11. A restart during a turn with open steps queues exactly one continuation. A turn with no plan
@@ -836,6 +837,58 @@ try {
     assert.ok(results[0]?.text.includes("The summary is written."), "The result is the answer of the last turn.");
     assert.ok(!results[0]?.text.includes("The logs are read."), "The result is not the first answer.");
     return { helperTurns: turns.length, results: results.length };
+  });
+
+  await check("a Stop before a teammate's continuation starts still gives the teammate one result", async () => {
+    const lead = await createAgent("Asker");
+    const helper = await createAgent("Worker");
+    const mark = loggedTurns().length;
+    const since = current.events.length;
+    const request = `Count the rows. ${plan(
+      {
+        steps: [
+          ["Count the rows", "completed"],
+          ["Check the totals", "pending"],
+        ],
+        answer: "There are 42 rows.",
+        delayMs: 1_500,
+      },
+      { steps: [["Check the totals", "completed"]], answer: "NOT REACHED" },
+    )}`;
+    const id = await send(
+      lead.id,
+      `Ask the worker. ${plan({
+        steps: [],
+        calls: [{ tool: "send_message", arguments: { recipientAgentIds: [helper.id], text: request } }],
+        answer: "I asked the worker.",
+      })}`,
+    );
+    assert.equal(await settled(id), "completed");
+    const helperTurn = await waitFor("the worker's turn", () =>
+      turnsSince(mark).find((turn) => turn.text.includes("Count the rows.") && !turn.text.includes("Ask the worker.")),
+    );
+    // A hidden agent finishes its turn, and its continuation waits in the queue. A Stop then ends the chain.
+    await runCauseEffect(current.service.setAgentHidden({ agentId: helper.id, hidden: true }));
+    await waitFor("the continuation to wait", () => continuationLines(helper.id).length === 1);
+    await runCauseEffect(current.service.interrupt(helper.id, helperTurn.turnId));
+    const result = await waitFor("the result for the asker", () =>
+      current.service
+        .listQueue(lead.id)
+        .deliveries.find((delivery) => delivery.sender.kind === "agent" && delivery.sender.agentId === helper.id),
+    );
+    assert.ok(result.text.includes("There are 42 rows."), "The result is the latest answer of the chain.");
+    assert.equal(await settled(result.id), "completed", "The asker takes the result.");
+    await runCauseEffect(current.service.setAgentHidden({ agentId: helper.id, hidden: false }));
+    const results = current.service
+      .listQueue(lead.id)
+      .deliveries.filter((delivery) => delivery.sender.kind === "agent" && delivery.sender.agentId === helper.id);
+    assert.equal(results.length, 1, "The asker gets one result.");
+    assert.ok(
+      !turnsSince(mark).some((turn) => turn.threadId === helperTurn.threadId && turn.note),
+      "No continuation turn runs after the Stop.",
+    );
+    assert.equal(errorsFor(helper.id, since).length, 0, "No error shows.");
+    return { results: results.length };
   });
 
   await check("a routine run continues in its own session and ends with one result", async () => {

@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { AGENT_PROVIDERS, type AgentModelOption, type AgentSummary } from "@openbot/contracts/ipc";
+import {
+  AGENT_PROVIDERS,
+  type AgentModelOption,
+  type AgentSummary,
+  type ConversationSnapshot,
+} from "@openbot/contracts/ipc";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
 import { Deferred, Effect, Result, Schema } from "effect";
@@ -85,6 +90,11 @@ export interface DrainHooks {
   startRequestedNewChat(agentId: string): Effect.Effect<void>;
   /** Drops that request: a turn in the agent's own chat starts first, so the agent's notes do not cover it. */
   dropRequestedNewChat(agentId: string): void;
+  /**
+   * A plan continuation chain ended before its next turn, and this delivery settled with its last turn:
+   * relays the result, adds the routine digest and releases the asking agent (`TurnLifecycle`).
+   */
+  planChainEnded(agentId: string, deliveryId: string, snapshot: ConversationSnapshot | undefined): Effect.Effect<void>;
 }
 
 /** The tasks of the agents, as the drain reads them. */
@@ -590,7 +600,8 @@ export class DrainScheduler {
   /**
    * Ends the automatic plan continuation of one lane, the agent's own chat when `taskId` is null:
    * after a Stop, a new chat, a new message, or a restart. The waiting deliveries end as
-   * completed, as their last turn did.
+   * completed, as their last turn did, and each gives the result that its last turn kept for the
+   * chain: the teammate that asked gets it, a routine run puts it in its digest.
    */
   readonly endPlanContinuation = Effect.fn("DrainScheduler.endPlanContinuation")(
     function* (this: DrainScheduler, agentId: string, taskId: string | null) {
@@ -607,6 +618,13 @@ export class DrainScheduler {
       for (const deliveryId of settled) {
         const deliveryTaskId = this.#mailbox.taskIdForDelivery(deliveryId);
         const taskThreadId = deliveryTaskId === null ? null : this.#tasks.threadId(deliveryTaskId);
+        // The conversation of the chain, also when a restart left it unloaded, for its last answer.
+        const threadId =
+          deliveryTaskId === null ? this.#store.list().find((agent) => agent.id === agentId)?.threadId : taskThreadId;
+        const answerSnapshot = yield* Effect.sync(() =>
+          threadId ? this.#conversation.ensureSnapshot(agentId, threadId) : undefined,
+        ).pipe(Effect.catchDefect(() => Effect.succeed(undefined)));
+        yield* this.#hooks.planChainEnded(agentId, deliveryId, answerSnapshot);
         const snapshot =
           deliveryTaskId === null
             ? this.#conversation.loadedSnapshot(agentId)
