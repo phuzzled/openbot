@@ -176,11 +176,33 @@ export function claudeCheckInHooks(
 }
 
 /**
- * Whether OpenBot can restrict a turn of this agent to a check-in. Claude only. Each other provider,
- * Codex included, not: the sweep shows the alert line in place of a nudge.
+ * Whether OpenBot can restrict a turn of this agent to a check-in. By default Claude only. Each other
+ * provider, Codex included, not: the sweep shows the alert line in place of a nudge. A test can list
+ * Codex too (`stallNudgeProviders`).
  */
-export function checkInRestricts(provider: AgentProviderId): boolean {
-  return provider === "claude";
+export function checkInRestricts(
+  provider: AgentProviderId,
+  nudgeProviders: string | undefined = process.env.OPENBOT_STALL_NUDGE_PROVIDERS,
+): boolean {
+  return stallNudgeProviders(nudgeProviders).has(provider);
+}
+
+/** The providers that have a code lock on a check-in turn, and that `OPENBOT_STALL_NUDGE_PROVIDERS` can list. */
+const LOCKED_PROVIDERS: ReadonlySet<string> = new Set(["claude", "codex"]);
+
+/**
+ * The providers that get stall nudges: `OPENBOT_STALL_NUDGE_PROVIDERS`, a comma list, for tests and
+ * expert use. Only "claude" and "codex" count: each other name is ignored. Empty, unset or with no
+ * name that counts: Claude only. Codex has only its read-only sandbox and `untrusted` approvals, and
+ * its apps (also the legacy `connectors`), plugins and project `.codex/config.toml` can run outside
+ * them (review 8), so list it only with that config off and a restart after each config edit.
+ */
+export function stallNudgeProviders(value: string | undefined): ReadonlySet<string> {
+  const listed = (value ?? "")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => LOCKED_PROVIDERS.has(name));
+  return new Set(listed.length > 0 ? listed : ["claude"]);
 }
 
 /**

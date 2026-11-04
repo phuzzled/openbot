@@ -24,6 +24,7 @@ import {
   checkInRestricts,
   claudeCheckInHooks,
   STALL_NUDGE_HEADER,
+  stallNudgeProviders,
   waitRequestText,
 } from "./check-in-turns";
 import { promiseTime, UNREAD_TIME_DAYS } from "./promise-time";
@@ -425,11 +426,26 @@ describe("check-in turn restriction", () => {
   });
 
   it("restricts Claude only; Codex and every other provider get the alert line", () => {
-    expect(checkInRestricts("claude")).toBe(true);
+    expect(checkInRestricts("claude", undefined)).toBe(true);
     for (const provider of ["codex", "acp", "opencode", "pi", "grok", "cursor", "muse"] as const)
-      expect(checkInRestricts(provider)).toBe(false);
+      expect(checkInRestricts(provider, undefined)).toBe(false);
+    expect(checkInRestricts("codex", "claude,codex")).toBe(true);
+    expect(checkInRestricts("pi", "claude,pi")).toBe(false);
     expect(CHECK_IN_CODEX_SANDBOX).toEqual({ type: "readOnly", networkAccess: false });
     expect(CHECK_IN_CODEX_APPROVAL).toBe("untrusted");
+  });
+});
+
+describe("OPENBOT_STALL_NUDGE_PROVIDERS (review 8)", () => {
+  it.each<[string | undefined, string[]]>([
+    [undefined, ["claude"]],
+    ["", ["claude"]],
+    [" , ", ["claude"]],
+    ["pi,grok", ["claude"]],
+    ["codex", ["codex"]],
+    [" Claude , CODEX ,pi", ["claude", "codex"]],
+  ])("reads %j", (value, expected) => {
+    expect([...stallNudgeProviders(value)].sort()).toEqual(expected);
   });
 });
 

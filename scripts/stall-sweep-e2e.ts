@@ -30,8 +30,11 @@
 //        before 05:00), not in 15 minutes, and no nudge comes before then.
 //   S21  A nudge turn calls create_routine and update_routine: both are refused, and no routine exists.
 //   S22  A restart during a nudge turn with open plan steps: no continuation runs after the restart.
-//   S23  A Codex agent whose Codex config turns on a plugin: no nudge, and the alert line.
+//   S23  With OPENBOT_STALL_NUDGE_PROVIDERS unset, a Codex agent whose Codex config turns on a plugin:
+//        no nudge, and the alert line.
 //   S24  A wait that a nudge turn opens keeps the request of the user, not the text of the nudge.
+//   S25  With OPENBOT_STALL_NUDGE_PROVIDERS unset, a Codex agent whose Codex config turns all off: no
+//        nudge, and the alert line (review 8: only Claude gets nudges by default).
 // No provider, account or network is used. `bun run test:stall-sweep`. `ONLY=S1,S5` runs some.
 // Writes .openbot-build/stall-sweep-e2e/report.json.
 import assert from "node:assert/strict";
@@ -58,6 +61,10 @@ const NUDGE_HEADER = "OpenBot check: your last turn ended with work still open."
 process.env.HOME = home;
 process.env.CODEX_HOME = join(home, ".codex");
 process.env.OPENBOT_CODEX_PATH = fakeCodex;
+// Review 8: by default only Claude gets nudges. The fake Codex runs the nudge path through this test
+// switch; S23 and S25 unset it and check the default.
+const NUDGE_PROVIDERS = "claude,codex";
+process.env.OPENBOT_STALL_NUDGE_PROVIDERS = NUDGE_PROVIDERS;
 mkdirSync(home, { recursive: true });
 
 const { AgentService } = await import("../src/backend/agent-service");
@@ -1149,7 +1156,33 @@ try {
     return { continued: continued.length };
   });
 
-  // S23: review 7, M3. A Codex agent whose own Codex config turns on a plugin gets no nudge: a plugin
+  /** Runs a probe with the default nudge providers: OPENBOT_STALL_NUDGE_PROVIDERS unset. */
+  const withDefaultProviders = async <T>(run: () => Promise<T>): Promise<T> => {
+    delete process.env.OPENBOT_STALL_NUDGE_PROVIDERS;
+    try {
+      return await run();
+    } finally {
+      process.env.OPENBOT_STALL_NUDGE_PROVIDERS = NUDGE_PROVIDERS;
+    }
+  };
+  /** A Codex agent with a promise and no backing wait: no nudge, one alert line, and the check ends. */
+  const codexGetsAlert = async (name: string) => {
+    const agent = await createAgent(name);
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `${REQUEST} ${plan(promiseTurn)} ${nudges([{ steps: [], answer: "NOT REACHED" }])}`,
+    );
+    assert.equal(await settled(id), "completed");
+    assert.equal(checks(agent.id).length, 1, "the promise has a check");
+    await fireAndSettle(agent.id, mark, 0);
+    assert.equal(nudgeTurns(mark).length, 0, "no nudge");
+    assert.equal(alerts(agent.id).length, 1, "one alert line");
+    assert.deepEqual(checks(agent.id), [], "the check ends");
+    return { nudges: 0, alerts: alerts(agent.id).length };
+  };
+
+  // S23: a Codex agent whose own Codex config turns on a plugin gets no nudge by default: a plugin
   // tool runs outside the sandbox. The user gets the alert line.
   await probe("S23 a Codex config with a plugin on: no nudge, the alert line", async () => {
     await writeFile(
@@ -1161,19 +1194,7 @@ try {
       }),
     );
     try {
-      const agent = await createAgent("Plugged");
-      const mark = loggedTurns().length;
-      const id = await send(
-        agent.id,
-        `${REQUEST} ${plan(promiseTurn)} ${nudges([{ steps: [], answer: "NOT REACHED" }])}`,
-      );
-      assert.equal(await settled(id), "completed");
-      assert.equal(checks(agent.id).length, 1, "the promise has a check");
-      await fireAndSettle(agent.id, mark, 0);
-      assert.equal(nudgeTurns(mark).length, 0, "no nudge");
-      assert.equal(alerts(agent.id).length, 1, "one alert line");
-      assert.deepEqual(checks(agent.id), [], "the check ends");
-      return { nudges: 0, alerts: alerts(agent.id).length };
+      return await withDefaultProviders(() => codexGetsAlert("Plugged"));
     } finally {
       await rm(fakeConfig, { force: true });
     }
@@ -1205,6 +1226,12 @@ try {
     assert.ok(wait.requestText.startsWith(REQUEST), "the request of the user");
     return { requestText: wait.requestText.slice(0, 60) };
   });
+
+  // S25: review 8. With the default nudge providers, a Codex agent gets no nudge also when its Codex
+  // config turns all off. The user gets the alert line.
+  await probe("S25 a Codex agent with the default providers: no nudge, the alert line", () =>
+    withDefaultProviders(() => codexGetsAlert("Plain")),
+  );
 
   report.checks.push(...results.map((r) => ({ name: r.name, passed: r.ok, detail: r.detail })));
   report.passed = results.length > 0 && results.every((r) => r.ok);
