@@ -256,6 +256,7 @@ import { RoutineRecords } from "./routine-records";
 import type { RoutineHoldWindow } from "./routine-store";
 import { type RoutineDueSource, RoutineTimer } from "./routine-timer";
 import type { SidebarLayoutStore } from "./sidebar-layout-store";
+import { checkInRestricts } from "./stall-sweep/check-in-turns";
 import { StallCheckStore } from "./stall-sweep/stall-check-store";
 import { STALL_ALERT_ITEM_TYPE, StallSweep, waitBacksStallCheck } from "./stall-sweep/stall-sweep";
 import type { VaultItems } from "./vault-items";
@@ -715,6 +716,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         providerReady: (agentId) => {
           const agent = this.#store.list().find((item) => item.id === agentId);
           return this.#providers.isReady() && agent !== undefined && !this.#providers.signInRequired(agent.provider);
+        },
+        checkInRestricts: (agentId) => {
+          const agent = this.#store.list().find((item) => item.id === agentId);
+          return agent !== undefined && checkInRestricts(agent.provider, this.enabledMcpServers().length);
         },
         laneOpen: (_agentId, taskId) => taskId === null || this.#tasks.threadId(taskId) !== null,
         laneBusy: (agentId, taskId) =>

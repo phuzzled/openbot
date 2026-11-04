@@ -129,6 +129,7 @@ import {
   toProviderClientOperationError,
 } from "./provider-client-effects";
 import type { ReadProviderHistory } from "./provider-history";
+import { CHECK_IN_REFUSAL, checkInAllowsClaudeTool, claudeCheckInHooks } from "./stall-sweep/check-in-turns";
 
 const execFileAsync = promisify(execFile);
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -391,6 +392,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   >();
   /** Resumes of one thread run one after another: two at once would leave a query nobody closes. */
   readonly #threadResumes = new Map<string, Deferred.Deferred<void, ProviderClientOperationError>>();
+  /**
+   * The threads whose last turn is a check-in turn (`checkInOnly` of `turn/start`, a stall nudge). Its
+   * `PreToolUse` hook and `canUseTool` deny each tool that the turn may not use. A turn that the CLI
+   * starts by itself after it keeps the mark, which only restricts more.
+   */
+  readonly #checkInThreads = new Set<string>();
   #running = false;
   #scope = Scope.makeUnsafe();
   /** The weekly window that the last account-wide usage reading showed. A live event for another one is not forwarded. */
@@ -869,6 +876,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       runCauseEffect(
         Effect.gen({ self: this }, function* () {
           if (config.profileGeneration) return { behavior: "deny", message: "Profile generation has no tools." };
+          if (this.#checkInThreads.has(threadId) && !checkInAllowsClaudeTool(toolName))
+            return { behavior: "deny", message: CHECK_IN_REFUSAL };
           if (config.workspaceOnly) {
             const excluded = yield* claudeWriteInExcluded(toolName, toolInput, config.cwd, config.excludedFolders);
             if (excluded) return { behavior: "deny", message: claudeExcludedWriteMessage(excluded) };
@@ -1001,10 +1010,20 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           ...(config.workspaceOnly
             ? {
                 sandbox: claudeWorkspaceSandbox(config.additionalDirectories, config.excludedFolders),
-                hooks: claudeWorkspaceHooks(config.cwd, config.additionalDirectories, config.excludedFolders),
                 managedSettings: CLAUDE_WORKSPACE_MANAGED_SETTINGS,
               }
             : {}),
+          // A check-in turn (a stall nudge) cannot act: `stall-sweep/check-in-turns.ts`.
+          ...(config.profileGeneration
+            ? {}
+            : {
+                hooks: claudeCheckInHooks(
+                  () => this.#checkInThreads.has(threadId),
+                  config.workspaceOnly
+                    ? claudeWorkspaceHooks(config.cwd, config.additionalDirectories, config.excludedFolders)
+                    : {},
+                ),
+              }),
           ...(plugins.length ? { plugins } : {}),
           mcpServers,
           env: {
@@ -1104,6 +1123,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const text = readInputText(params);
     // The CLI can start a turn of its own while the model or effort changes above.
     if (runtime.activeTurn) return yield* providerFailure(this.#turnActiveError(runtime.activeTurn));
+    if (isRecord(params) && params.checkInOnly === true) this.#checkInThreads.add(threadId);
+    else this.#checkInThreads.delete(threadId);
     // Only now: a model or effort change that fails above leaves the idle timer armed, so the
     // pool can still release the thread.
     this.#beginTurn(runtime, turnId, false);

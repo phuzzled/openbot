@@ -33,9 +33,11 @@ const PROMISES = [
   new RegExp(
     String.raw`\b${WILL}\b[^.!?\n]{0,80}\b(?:once|when|as\s+soon\s+as|after)\b[^.!?\n]{0,60}\b${LATER_EVENT}\b`,
     "i",
-  ), // "Tomorrow I'll compare the quotes", "later today I'll send the summary". Not "tomorrow I'll be off".
+  ),
+  // "Tomorrow I'll compare the quotes", "later today I'll send the summary", "On Monday I'll send it",
+  // "In 2 hours I'll check". Not "tomorrow I'll be off". The sweep checks it after that time.
   new RegExp(
-    String.raw`\b(?:tomorrow|tonight|later\s+(?:today|tonight|on)|this\s+(?:afternoon|evening)|first\s+thing\s+tomorrow|in\s+the\s+morning)\s*,?\s+${WILL}\s+(?!not\b|never\b|be\s+(?:off|away|out|offline|unavailable)\b)[a-z]`,
+    String.raw`\b(?:tomorrow|tonight|later\s+(?:today|tonight|on)|this\s+(?:afternoon|evening)|first\s+thing\s+tomorrow|in\s+the\s+morning|(?:on|next|this)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+week|in\s+(?:\d+|an?|one|two|three|a\s+few|a\s+couple\s+of)\s+(?:minutes?|hours?|days?))\s*,?\s+${WILL}\s+(?!not\b|never\b|be\s+(?:off|away|out|offline|unavailable)\b)[a-z]`,
     "i",
   ),
 ];
@@ -48,7 +50,7 @@ const OFFER = /\bif\s+you(?:['’]d)?\s+(?:want|like|prefer|need|wish)\b|\bwould
  * and I'll send it", "I'll deploy with your approval", "Ready when you are".
  */
 const WAITS_ON_USER =
-  /\b(?:when(?:ever)?|once|as\s+soon\s+as|after|if|until|unless)\s+(?:you|you['’](?:re|ve|ll|d)|your)\b|\blet\s+me\s+know\b|\bsay\s+the\s+word\b|\bready\s+when\s+you\s+are\b|\b(?:on|with|after|once\s+i\s+(?:have|get))\s+your\s+(?:go-?ahead|approval|ok(?:ay)?|confirmation|sign-?off|answer|reply|word)\b/i;
+  /\b(?:when(?:ever)?|once|as\s+soon\s+as|after|if|until|unless)\s+(?:you|you['’](?:re|ve|ll|d)|your)\b|\blet\s+me\s+know\b|\bsay\s+the\s+word\b|\bready\s+when\s+you\s+are\b|\b(?:on|with|after|once\s+i\s+(?:have|get))\s+your\s+(?:go-?ahead|approval|ok(?:ay)?|confirmation|sign-?off|answer|reply|word)\b|\bplease\s+(?:review|approve|confirm|check|advise|decide|sign\s+off)\b|\bstanding\s+by\b|\bover\s+to\s+you\b|\b(?:your|the\s+user['’]s)\s+(?:call|decision)\b|\bup\s+to\s+you\b|\bholding\s+off\b|\bnot\s+(?:yet\s+)?sent\b|\bhaven['’]t\s+sent\b|\b(?:need|needs|want|wants|require|requires)\s+(?:you\s+to\s+(?:check|review|approve|confirm|sign)|your\s+(?:go-?ahead|approval|ok(?:ay)?|confirmation|sign-?off|review|input|decision|answer))\b/i;
 /**
  * A sentence that waits on an approval before the agent acts, so it is not a stall: "After approval
  * I'll deploy", "Pending your approval, I'll send it", "If approved, I'll book it", "Say yes and I'll
@@ -58,6 +60,8 @@ const WAITS_ON_APPROVAL = new RegExp(
   [
     // "after approval", "pending your approval", "upon sign-off", "awaiting the board's OK".
     String.raw`\b(?:after|upon|on|with|pending|once|when|if|until|awaiting|waiting\s+(?:for|on)|subject\s+to)\s+(?:(?:your|the|an?|his|her|their|our|[a-z]+['’]s)\s+)?(?:explicit\s+|final\s+|written\s+)?(?:approval|ok(?:ay)?|go-?ahead|green\s+light|sign-?off|confirmation|permission|consent|authori[sz]ation|decision|review|answer|reply|response|feedback|input|thumbs\s+up)\b`,
+    // "for your approval", "before your sign-off", "need your go-ahead", "without your OK". Only an approval noun.
+    String.raw`\b(?:for|before|needs?|without)\s+(?:(?:your|the|an?|his|her|their|our|[a-z]+['’]s)\s+)?(?:explicit\s+|final\s+|written\s+)?(?:approval|ok(?:ay)?|go-?ahead|green\s+light|sign-?off|confirmation|permission|consent|authori[sz]ation|thumbs\s+up)\b`,
     // "if approved", "once it's signed off", "when this is confirmed".
     String.raw`\b(?:after|once|when|if|until|unless)\s+(?:(?:it|this|that|they|these)\s+(?:is|are|['’]s|['’]re|gets?|has\s+been|have\s+been)\s+|(?:it|this|that)['’]s\s+)?(?:approved|signed\s+off|confirmed|authori[sz]ed|ok(?:ay)?['’]?e?d|green-?lit|cleared)\b`,
     // "approve and I'll book it", "say yes and I'll send it", "give me the green light and I'll send it".
@@ -71,7 +75,7 @@ const WAITS_ON_APPROVAL = new RegExp(
  * name counts, so "when the vendors reply" does not.
  */
 const WAITS_ON_NAMED_PERSON =
-  /\b(?:[Ww]hen(?:ever)?|[Oo]nce|[Aa]s\s+soon\s+as|[Aa]fter|[Ii]f|[Uu]ntil|[Uu]nless)\s+(?:[A-Z][a-z]+|the\s+user)\s+(?:repl(?:y|ies|ied)|answers?|answered|confirms?|confirmed|approves?|approved|decides?|decided|agrees?|agreed|responds?|responded|signs?\s+off|says?\s+(?:yes|so|ok(?:ay)?|go))\b/;
+  /\b(?:[Ww]hen(?:ever)?|[Oo]nce|[Aa]s\s+soon\s+as|[Aa]fter|[Ii]f|[Uu]ntil|[Uu]nless)\s+(?:[A-Z][a-z]+|the\s+user)\s+(?:repl(?:y|ies|ied)|answers?|answered|confirms?|confirmed|approves?|approved|decides?|decided|agrees?|agreed|responds?|responded|signs?|signed|signs?\s+off|says?\s+(?:yes|so|ok(?:ay)?|go))\b/;
 /** Words that put a condition on the promise of a sentence: "once the funds arrive, I'll pay the supplier". */
 const CONDITION =
   /\b(?:when(?:ever)?|once|as\s+soon\s+as|after|if|until|unless|pending|upon|provided|assuming|in\s+case)\b/i;
@@ -111,7 +115,7 @@ function sentenceWaitsOnPerson(sentence: string): boolean {
 
 /** A line that starts a text that the agent writes for someone else: "Here is a draft:", "Subject:", "Hi Sam,". */
 const DRAFT_START =
-  /^(?:(?:here(?:['’]s|\s+is)|below\s+is)\b[^\n]{0,40}\b(?:draft|reply|response|message|email|e-mail|text|note|post|letter)\b|here(?:['’]s|\s+is)\s+what\s+i['’]d\s+(?:send|say|write|reply)\b|(?:draft|proposed|suggested)\s+(?:draft|reply|response|message|email|e-mail|text|note|post|letter|answer)\b[^:\n]{0,40}:|(?:draft|subject|re|to|cc)\s*:|(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\b[^,\n]{0,40},)/i;
+  /^(?:(?:here(?:['’]s|\s+is)|below\s+is)\b[^\n]{0,40}\b(?:draft|reply|response|message|email|e-mail|text|note|post|letter)\b|here(?:['’]s|\s+is)\s+what\s+i['’]d\s+(?:send|say|write|reply)\b|(?:draft|proposed|suggested)\s+(?:draft|reply|response|message|email|e-mail|text|note|post|letter|answer)\b[^:\n]{0,40}:|(?:draft|subject|re|to|cc)\s*:|draft\s*$|(?:draft\s+)?(?:email|e-mail|message|text|sms|note|letter|reply|dm|whatsapp)\s+(?:to|for)\s+[^.!?\n]{1,40}(?::|$)|text\s+to\s+send\s*:|(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\b[^,\n]{0,40},)/i;
 /** The sign-off line of a drafted message: "Cheers,", "Kind regards", "Thanks!". */
 const SIGN_OFF =
   /^(?:cheers|regards|(?:kind|best|warm|warmest)\s+regards|best(?:\s+wishes)?|all\s+the\s+best|thanks|thank\s+you|many\s+thanks|sincerely|yours(?:\s+\w+)?|talk\s+soon|speak\s+soon)\s*[,.!]?$/i;
@@ -291,9 +295,12 @@ export function detectStall(input: StallInput): Stall | null {
     answer = without;
     social = true;
   }
+  // An answer that waits on the user in any sentence is no stall, also when another sentence promises
+  // to watch: a nudge would land on an agent whose draft waits for approval.
+  if (answerWaitsOnUser(answer)) return null;
   const promise = followUpPromise(answer);
   if (promise) return { kind: "promise", reason: `You wrote: "${promise}"` };
-  if (social || input.openSteps.length === 0 || answerWaitsOnUser(input.answer)) return null;
+  if (social || input.openSteps.length === 0) return null;
   return {
     kind: "openSteps",
     reason: `Your plan has open steps: ${input.openSteps.map((step) => `"${step}"`).join(", ")}`,

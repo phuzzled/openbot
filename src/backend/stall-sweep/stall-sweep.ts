@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { cutStallRequest, stallNudgeText } from "../agent/delivery-content";
 import { turnLeavesWaitOpen } from "../agent-waits/agent-waits";
 import type { RoutineDueSource } from "../routine-timer";
+import { promiseTime } from "./promise-time";
 import type { StallCheck, StallCheckStore } from "./stall-check-store";
 import { detectStall, type StallInput } from "./stall-detection";
 
@@ -41,29 +42,56 @@ export interface StallTurn extends Omit<StallInput, "excluded"> {
   deliveries: readonly Pick<QueueDelivery, "id" | "sender" | "recipientAgentId" | "text">[];
 }
 
+/** The prefix of the reason of a promise check (`detectStall`), before the quoted promise. */
+const PROMISE_REASON = 'You wrote: "';
+
+/**
+ * The time that the promise of a check names (`promiseTime`), read again from its reason and its
+ * creation time, or null: an open-steps check, or a promise with no time word.
+ */
+export function stallCheckNamedTime(check: Pick<StallCheck, "reason" | "createdAt">): Date | null {
+  if (!check.reason.startsWith(PROMISE_REASON)) return null;
+  return promiseTime(check.reason.slice(PROMISE_REASON.length), new Date(check.createdAt));
+}
+
+/**
+ * The time from which the age limit of a check counts: the time that its promise names, or its
+ * creation when that is later or when it names none. "Tomorrow I'll pay the supplier" has its 24 hours
+ * from tomorrow, not from now.
+ */
+export function stallCheckAgeFrom(check: Pick<StallCheck, "reason" | "createdAt">): number {
+  return Math.max(Date.parse(check.createdAt), stallCheckNamedTime(check)?.getTime() ?? 0);
+}
+
 /** The facts of a check that tell whether a wait backs it. */
 export type StallCheckWaitKey = Pick<
   StallCheck,
-  "agentId" | "taskId" | "requestDeliveryId" | "nudgeDeliveryId" | "createdAt"
+  "agentId" | "taskId" | "requestDeliveryId" | "nudgeDeliveryId" | "createdAt" | "dueAt"
 >;
 
 /**
  * Whether an open wait backs a stall check: it runs in the check's lane (`laneOf`), and it serves the
- * check's request or nudge, it opened at or after the check, or it has a wake time, so it brings the
- * agent back to the lane by itself (a status question while the timed wait of the first request is
- * open). An older wait of the lane with no time, as one that a Stop left, does not turn the sweep off
- * for the lane.
+ * check's request or nudge, it opened at or after the check, or it has a wake time within
+ * `STALL_MAX_AGE_MS` of the check's time, so it brings the agent back to the lane by itself soon (a
+ * status question while the timed wait of the first request is open). An older wait of the lane with
+ * no time, as one that a Stop left, or one that wakes days later, does not turn the sweep off for the
+ * lane.
  */
 export function waitBacksStallCheck(
   waits: readonly AgentWait[],
   check: StallCheckWaitKey,
   laneOf: (wait: AgentWait) => string | null,
+  now: Date = new Date(),
 ): boolean {
   const ids = [check.requestDeliveryId, ...(check.nudgeDeliveryId ? [check.nudgeDeliveryId] : [])];
+  // The later of the check's time and now: a check that a busy lane put off is looked at now.
+  const checkTime = Math.max(check.dueAt ? Date.parse(check.dueAt) : 0, now.getTime());
   return waits.some(
     (wait) =>
       laneOf(wait) === check.taskId &&
-      (turnLeavesWaitOpen([wait], ids) || wait.createdAt >= check.createdAt || Boolean(wait.wakeAt)),
+      (turnLeavesWaitOpen([wait], ids) ||
+        wait.createdAt >= check.createdAt ||
+        (typeof wait.wakeAt === "string" && Date.parse(wait.wakeAt) - checkTime <= STALL_MAX_AGE_MS)),
   );
 }
 
@@ -72,6 +100,11 @@ export interface StallSweepHooks {
   mayWake(agentId: string): boolean;
   /** Whether a provider can run a turn of the agent now. */
   providerReady(agentId: string): boolean;
+  /**
+   * Whether OpenBot can restrict a turn of the agent to a check-in (`check-in-turns.ts`). When it
+   * cannot, the sweep sends no nudge: it shows the alert line to the user and ends the check.
+   */
+  checkInRestricts(agentId: string): boolean;
   /** Whether the lane still exists: the own chat always, a task while its thread is open. */
   laneOpen(agentId: string, taskId: string | null): boolean;
   /** Whether a delivery of the lane is queued, starting or running. */
@@ -198,6 +231,13 @@ export class StallSweep implements RoutineDueSource {
       : first && { id: first.id, text: cutStallRequest(first.text) };
     if (!request) return;
     const now = this.#now();
+    // A promise that names a time ("Tomorrow I'll pay the supplier") is checked after that time.
+    const named =
+      stall.kind === "promise" ? stallCheckNamedTime({ reason: stall.reason, createdAt: now.toISOString() }) : null;
+    const dueMs = Math.max(
+      now.getTime() + (nudges === 0 ? STALL_GRACE_MS : STALL_REPEAT_MS),
+      named ? named.getTime() + STALL_GRACE_MS : 0,
+    );
     this.#store.replace(
       {
         agentId: turn.agentId,
@@ -206,7 +246,7 @@ export class StallSweep implements RoutineDueSource {
         requestText: request.text,
         turnId: turn.turnId,
         reason: stall.reason,
-        dueAt: new Date(now.getTime() + (nudges === 0 ? STALL_GRACE_MS : STALL_REPEAT_MS)).toISOString(),
+        dueAt: new Date(dueMs).toISOString(),
         nudges,
       },
       now,
@@ -251,8 +291,9 @@ export class StallSweep implements RoutineDueSource {
         continue;
       }
       if (check.dueAt === null || check.dueAt > nowText) continue;
-      // A check older than the age limit ends with no nudge, also while the agent is hidden.
-      if (now.getTime() - Date.parse(check.createdAt) > STALL_MAX_AGE_MS) {
+      // A check older than the age limit ends with no nudge, also while the agent is hidden. The age
+      // counts from the time that its promise names, when that is later than its creation.
+      if (now.getTime() - stallCheckAgeFrom(check) > STALL_MAX_AGE_MS) {
         this.#store.delete(check.id);
         continue;
       }
@@ -277,7 +318,11 @@ export class StallSweep implements RoutineDueSource {
         this.#store.setDue(check.id, new Date(now.getTime() + RETRY_MS).toISOString());
         continue;
       }
-      if (this.#store.nudgesSince(agentId, new Date(now.getTime() - DAY_MS)) >= STALL_DAILY_LIMIT) {
+      // A provider that OpenBot cannot restrict to a check-in gets no nudge: the user sees the alert.
+      if (
+        !this.#hooks.checkInRestricts(agentId) ||
+        this.#store.nudgesSince(agentId, new Date(now.getTime() - DAY_MS)) >= STALL_DAILY_LIMIT
+      ) {
         this.#store.delete(check.id);
         this.#hooks.alert(agentId, taskId);
         continue;
