@@ -244,7 +244,7 @@ import type { McpSignInOpener } from "./mcp-oauth-provider";
 import { McpServerStore } from "./mcp-server-store";
 import { MessagingThreads, toMessagingThreadFailed } from "./messaging/messaging-threads";
 import type { PasswordVault } from "./password-vault";
-import { decodeRecordResponse, getRecord, getString } from "./protocol";
+import { decodeRecordResponse, getString } from "./protocol";
 import { NO_PROVIDER_CREDENTIALS, type ProviderClientContext } from "./provider-drivers";
 import { providerHistoryPersistence } from "./provider-history-persistence";
 import { recordAgentRestartActivity } from "./restart-activity";
@@ -253,7 +253,7 @@ import { RoutineRecords } from "./routine-records";
 import type { RoutineHoldWindow } from "./routine-store";
 import { type RoutineDueSource, RoutineTimer } from "./routine-timer";
 import type { SidebarLayoutStore } from "./sidebar-layout-store";
-import { CodexCheckInConfigs, checkInRestricts } from "./stall-sweep/check-in-turns";
+import { checkInRestricts } from "./stall-sweep/check-in-turns";
 import { StallCheckStore } from "./stall-sweep/stall-check-store";
 import { STALL_ALERT_ITEM_TYPE, StallSweep, waitBacksStallCheck } from "./stall-sweep/stall-sweep";
 import type { VaultItems } from "./vault-items";
@@ -456,7 +456,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /** Fork: nudges an agent whose turn left work open with nothing to bring it back. */
   readonly #stallSweep: StallSweep;
   /** What the last Codex config read of each agent says about a check-in turn of the stall sweep. */
-  readonly #codexCheckInConfigs = new CodexCheckInConfigs();
   readonly #tasks: AgentTasks;
   readonly #tables: AgentTables | null;
   readonly #routines: RoutineScheduler;
@@ -1133,7 +1132,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         reportMcpDrops: (provider, drops) => this.#mcp.reportDrops(provider, drops),
         logHandoffReadFailure: (provider, error) =>
           logger.warn("Could not read the work steps of an earlier provider session.", { provider, error }),
-        codexConfigRead: (agentId, config) => this.#codexCheckInConfigs.record(agentId, config),
       },
     });
     this.#boot = new BootRecovery({
@@ -2789,29 +2787,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return snapshot;
   }).bind(this);
 
-  /**
-   * Fork: whether OpenBot can restrict a stall nudge turn of the agent to a check-in (`checkInRestricts`).
-   * For a Codex agent it reads the effective config of the agent's running Codex process now. With no
-   * running process of its own, it uses the last read of a session start (`CodexCheckInConfigs`). A
-   * failed read, or no read, sends no nudge.
-   */
+  /** Fork: whether OpenBot can restrict a stall nudge turn of the agent to a check-in (`checkInRestricts`). */
   #checkInRestricts(agentId: string): Effect.Effect<boolean> {
     const agent = this.#store.list().find((item) => item.id === agentId);
-    if (!agent) return Effect.succeed(false);
-    const mcpServers = this.enabledMcpServers().length;
-    if (agent.provider !== "codex" || mcpServers > 0)
-      return Effect.succeed(checkInRestricts(agent.provider, mcpServers));
-    const configs = this.#codexCheckInConfigs;
-    const client = this.#providers.clientForAgent(agent);
-    const read = client?.running
-      ? client.request("config/read", { includeLayers: false }, decodeRecordResponse).pipe(
-          Effect.map((response) => getRecord(response, "config")),
-          Effect.catch(() => Effect.succeed(null)),
-          Effect.tap((config) => Effect.sync(() => configs.record(agentId, config))),
-          Effect.asVoid,
-        )
-      : Effect.void;
-    return read.pipe(Effect.map(() => checkInRestricts(agent.provider, mcpServers, configs.allows(agentId))));
+    return Effect.succeed(agent !== undefined && checkInRestricts(agent.provider));
   }
 
   /** Refuses new work for a hidden agent. A turn that already runs is not affected. */

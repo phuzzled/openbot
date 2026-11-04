@@ -15,14 +15,12 @@ import { isDynamicRecord } from "@openbot/contracts/runtime-values";
  *   tool that is not in `CLAUDE_CHECK_IN_TOOLS` and not one of the OpenBot tools of
  *   `CHECK_IN_OPENBOT_TOOLS` on OpenBot's own server. The MCP tools and resources of the user's servers,
  *   Bash, file writes, web fetches, web searches and subagents are denied.
- * - Codex: the turn runs with a read-only sandbox with no network and the `untrusted` approval policy,
- *   and OpenBot declines each approval, permission and MCP consent request of the turn. Codex runs the
- *   MCP tools of the user's servers, its apps (connectors), its plugins and its browser and computer
- *   use outside its sandbox, and a tool that the user set to "always allow" asks nothing. So a Codex
- *   agent gets a nudge only when no MCP server of OpenBot is on, and the effective Codex config of the
- *   agent's Codex process turns all of those off (`codexConfigAllowsCheckIn`).
- * - Every other provider (ACP agents, Pi, Grok, Muse, and the rest): OpenBot cannot restrict a turn,
- *   so the sweep sends no nudge and shows the stall alert line to the user.
+ * - Every provider but Claude (Codex, ACP agents, Pi, Grok, Muse, and the rest): OpenBot cannot
+ *   restrict a turn fully, so the sweep sends no nudge and shows the stall alert line to the user.
+ *   Codex runs the MCP tools of the user's servers, its apps, its plugins and its browser and computer
+ *   use outside its sandbox, and its effective config can change under a running thread. A nudge
+ *   delivery that still reaches a Codex thread (the provider changed after the sweep queued it) runs
+ *   with a read-only sandbox and the `untrusted` approval policy, and OpenBot declines its approvals.
  */
 
 /** The first line of a stall nudge (`stallNudgeText`). It tells a nudge from the wake of timed waits. */
@@ -178,63 +176,11 @@ export function claudeCheckInHooks(
 }
 
 /**
- * Whether OpenBot can restrict a turn of this agent to a check-in. Claude always. Codex only when no
- * MCP server of OpenBot is on (`mcpServers` is the number of servers that its threads get) and the
- * agent's own Codex config allows it (`codexConfigAllows`, from `CodexCheckInConfigs`). Each other
- * provider not: the sweep shows the alert line in place of a nudge.
+ * Whether OpenBot can restrict a turn of this agent to a check-in. Claude only. Each other provider,
+ * Codex included, not: the sweep shows the alert line in place of a nudge.
  */
-export function checkInRestricts(provider: AgentProviderId, mcpServers: number, codexConfigAllows = false): boolean {
-  if (provider === "claude") return true;
-  if (provider === "codex") return mcpServers === 0 && codexConfigAllows;
-  return false;
-}
-
-/**
- * The Codex features that run tools outside the sandbox of a turn, and that a Codex agent's config must
- * turn off for a check-in turn. Codex 0.164 turns each one on by default.
- */
-export const CODEX_CHECK_IN_OFF_FEATURES = ["apps", "plugins", "browser_use", "computer_use"] as const;
-
-/** Whether an entry of a Codex table is on: Codex turns an entry on unless it says `enabled = false`. */
-function entriesOn(table: unknown, skip?: string): boolean {
-  if (!isDynamicRecord(table)) return false;
-  return Object.entries(table).some(
-    ([name, entry]) => name !== skip && !(isDynamicRecord(entry) && entry.enabled === false),
-  );
-}
-
-/**
- * Whether the effective Codex config (the `config` of a Codex `config/read` answer) allows a check-in
- * turn. Safe side first: null (not read) does not. Each feature of `CODEX_CHECK_IN_OFF_FEATURES` must be
- * `false`, no plugin and no app may be on, and approvals must not go to Codex's own reviewer, which
- * could approve what OpenBot declines. The MCP servers of the Codex config do not count: each thread of
- * OpenBot turns them off (`codexThreadMcpServers`).
- */
-export function codexConfigAllowsCheckIn(config: unknown): boolean {
-  if (!isDynamicRecord(config)) return false;
-  const features = config.features;
-  if (!isDynamicRecord(features) || CODEX_CHECK_IN_OFF_FEATURES.some((name) => features[name] !== false)) return false;
-  if (entriesOn(config.plugins) || entriesOn(config.apps, "_default")) return false;
-  const reviewer = config.approvals_reviewer;
-  return reviewer === undefined || reviewer === null || reviewer === "user";
-}
-
-/**
- * Owns what the last Codex config read of each agent says about check-in turns (`codexConfigAllowsCheckIn`).
- * `ThreadLifecycle` records it each time it starts or resumes a Codex session of the agent. An agent
- * with no record (no session since OpenBot started, or a failed read) gets no nudge.
- */
-export class CodexCheckInConfigs {
-  readonly #allows = new Map<string, boolean>();
-
-  /** Records the effective Codex config of a read for the agent, or null when the read failed. */
-  record(agentId: string, config: unknown): void {
-    this.#allows.set(agentId, codexConfigAllowsCheckIn(config));
-  }
-
-  allows(agentId: string): boolean {
-    return this.#allows.get(agentId) === true;
-  }
+export function checkInRestricts(provider: AgentProviderId): boolean {
+  return provider === "claude";
 }
 
 /**

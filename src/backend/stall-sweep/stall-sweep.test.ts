@@ -19,16 +19,14 @@ import {
   CHECK_IN_CODEX_SANDBOX,
   CHECK_IN_REFUSAL,
   CheckInTurns,
-  CodexCheckInConfigs,
   checkInAllowsClaudeTool,
   checkInAllowsOpenBotTool,
   checkInRestricts,
   claudeCheckInHooks,
-  codexConfigAllowsCheckIn,
   STALL_NUDGE_HEADER,
   waitRequestText,
 } from "./check-in-turns";
-import { promiseTime, UNREAD_TIME } from "./promise-time";
+import { promiseTime, UNREAD_TIME_DAYS } from "./promise-time";
 import { StallCheckStore } from "./stall-check-store";
 import { answerWaitsOnUser, detectStall, followUpPromise, type StallInput } from "./stall-detection";
 import {
@@ -426,53 +424,12 @@ describe("check-in turn restriction", () => {
     expect(turns.has("thread-1")).toBe(false);
   });
 
-  it("restricts Claude always, Codex only with no MCP server and a Codex config that allows it", () => {
-    expect(checkInRestricts("claude", 3)).toBe(true);
-    expect(checkInRestricts("codex", 0, true)).toBe(true);
-    expect(checkInRestricts("codex", 0, false)).toBe(false);
-    expect(checkInRestricts("codex", 0)).toBe(false);
-    expect(checkInRestricts("codex", 1, true)).toBe(false);
-    for (const provider of ["acp", "opencode", "pi", "grok", "cursor", "muse"] as const)
-      expect(checkInRestricts(provider, 0)).toBe(false);
+  it("restricts Claude only; Codex and every other provider get the alert line", () => {
+    expect(checkInRestricts("claude")).toBe(true);
+    for (const provider of ["codex", "acp", "opencode", "pi", "grok", "cursor", "muse"] as const)
+      expect(checkInRestricts(provider)).toBe(false);
     expect(CHECK_IN_CODEX_SANDBOX).toEqual({ type: "readOnly", networkAccess: false });
     expect(CHECK_IN_CODEX_APPROVAL).toBe("untrusted");
-  });
-});
-
-describe("Codex config of a check-in turn (review 7, M3)", () => {
-  const off = { apps: false, plugins: false, browser_use: false, computer_use: false };
-
-  it("allows a check-in only when apps, plugins, the browser and computer use are off", () => {
-    expect(codexConfigAllowsCheckIn({ features: off, mcp_servers: { gmail: { command: "x" } } })).toBe(true);
-    expect(codexConfigAllowsCheckIn({ features: off, apps: { _default: { enabled: true } } })).toBe(true);
-    expect(codexConfigAllowsCheckIn({ features: off, plugins: { "gmail@openai-curated": { enabled: false } } })).toBe(
-      true,
-    );
-    expect(codexConfigAllowsCheckIn({ features: off, approvals_reviewer: "user" })).toBe(true);
-  });
-
-  it.each<[string, unknown]>([
-    ["no config read", null],
-    ["no features", {}],
-    ["apps on by default", { features: { ...off, apps: undefined } }],
-    ["plugins on", { features: { ...off, plugins: true } }],
-    ["browser use on by default", { features: { ...off, browser_use: undefined } }],
-    ["computer use on", { features: { ...off, computer_use: true } }],
-    ["a plugin on", { features: off, plugins: { "gmail@openai-curated": { enabled: true } } }],
-    ["a plugin with no enabled key", { features: off, plugins: { "github@openai-curated": {} } }],
-    ["an app on", { features: off, apps: { gmail: { enabled: true } } }],
-    ["approvals to the auto reviewer", { features: off, approvals_reviewer: "auto_review" }],
-  ])("allows no check-in with %s", (_name, config) => {
-    expect(codexConfigAllowsCheckIn(config)).toBe(false);
-  });
-
-  it("keeps the last read of each agent, and nothing for an agent with no read", () => {
-    const configs = new CodexCheckInConfigs();
-    expect(configs.allows("a1")).toBe(false);
-    configs.record("a1", { features: off });
-    expect(configs.allows("a1")).toBe(true);
-    configs.record("a1", null);
-    expect(configs.allows("a1")).toBe(false);
   });
 });
 
@@ -553,11 +510,13 @@ describe("promiseTime", () => {
   it.each([
     "By end of week I'll send it.",
     "This week I'll send it.",
+    "Later this week I'll send it.",
+    "Over the weekend I'll send it.",
     "Next quarter I'll review it.",
     "In November I'll check.",
     "On 2026-01-02 I'll send it.",
-  ])("does not read %s: the sweep drops the check", (text) => {
-    expect(promiseTime(text, now)).toBe(UNREAD_TIME);
+  ])("does not read %s: a late check at 09:00 seven days on (review 8, L5)", (text) => {
+    expect(promiseTime(text, now)).toEqual(new Date(2026, 10, 5 + UNREAD_TIME_DAYS, 9));
   });
 
   it("reads tomorrow said before 05:00 as later today (review 7, T1)", () => {
@@ -745,15 +704,20 @@ describe("StallSweep", () => {
     expect(state.nudges).toHaveLength(1);
   });
 
-  it("makes no check for a promise whose time it cannot read, and sends no alert (review 7, T1)", async () => {
+  it("checks a promise whose time it cannot read late, and counts its age from that time (review 8, L5)", async () => {
     const { store, state, sweep, advance, fire } = setup();
-    sweep.turnEnded(userTurn());
-    expect(store.forLane("chief", null)).not.toBeNull();
-    sweep.turnEnded(userTurn({ answer: "Invoice checked. By end of week I'll pay the supplier." }));
-    expect(store.forLane("chief", null)).toBeNull();
+    sweep.turnEnded(userTurn({ answer: "Invoice checked. I'll get back to you by end of week." }));
+    const check = store.forLane("chief", null);
+    const late = promiseTime("I'll get back to you by end of week.", new Date("2026-11-01T10:00:00.000Z"));
+    if (!check?.dueAt || !late) throw new Error("no check");
+    expect(Date.parse(check.dueAt)).toBe(late.getTime() + STALL_GRACE_MS);
     advance(2 * STALL_MAX_AGE_MS);
     await fire();
     expect(state.nudges).toEqual([]);
+    // Days past the age limit from creation, but inside it from the late check: a nudge.
+    advance(Date.parse(check.dueAt) - Date.parse("2026-11-01T10:00:00.000Z") - 2 * STALL_MAX_AGE_MS);
+    await fire();
+    expect(state.nudges).toHaveLength(1);
     expect(state.alerts).toEqual([]);
   });
 

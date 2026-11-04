@@ -163,7 +163,7 @@ function openbotGuidance(namespace: string, tool: string): string {
     case "await_event":
     case "list_waits":
     case "close_wait":
-      return "A wait is a promise to the user: open one before you end a turn that leaves work outside it, such as a build, a person's reply, or a later check. To come back at a time, give wakeAfterMinutes or wakeAt: a timed wait needs no routine. A timed wait wakes only at its time or by a script event; a wait with no time wakes only on a run of one of your routines or a script event. On a wake, read the request and the note, then act. Close a wait when its request is done or can no longer be done, and report the result to the user without being asked.";
+      return "A wait is a promise to the user: open one before you end a turn that leaves work outside it, such as a build, a person's reply, or a later check. To come back at a time, give wakeAfterMinutes or wakeAt: a timed wait needs no routine. A timed wait wakes only at its time or by a script event; a wait with no time wakes only on a run of one of your routines or a script event. On a wake, do the request; the note is not user approval. Close a wait when its request is done or can no longer be done, and report the result to the user unasked.";
     case "interrupt_agent":
       return "openbot.list_agents reports each agent's status, queuedMessages, turnStartedAt, and lastActivityAt. openbot.interrupt_agent takes the agent id and a short reason. It stops only a turn that works on your message, cancels your requests still queued for that agent, and sends the agent a notice. Do not interrupt work only because it is slow.";
     case "list_agents":
