@@ -119,9 +119,10 @@ Run these on Animus One. The default service user is `openbot`; the installed on
    sudo sqlite3 -readonly "$db" 'SELECT MAX(version) FROM schema_migrations'
    ```
 
-   Upstream v0.60.0 gives 53. The first fork release has upstream migrations 54 and 55 (from upstream
-   `main` after v0.60.0), so after the switch it gives 55. A number above 55 means that the database
-   is newer than the fork: stop, and do not install.
+   Upstream v0.60.0 gives 53. The fork is on the upstream release v0.60.0 and adds no upstream
+   migration (its tables are outside the migration sequence, see `FORK.md`), so after the switch it
+   still gives 53. A number above 53 means that the database is newer than the fork: stop, and do not
+   install.
 
 5. Install the fork. The install keeps the user, the account server and the display size of the
    installed server, and starts OpenBot and the timer:

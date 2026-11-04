@@ -101,10 +101,12 @@ version() {
   echo "$next"
 }
 
-# Files that fork commits (not in upstream main) added or changed, and that ref still has.
+# Files that fork commits (not in the upstream release that ref is on) added or changed, and that ref
+# still has.
 unit_tests() {
-  local ref=${1:-HEAD} file
-  git log --no-merges --format= --name-only --diff-filter=AMR "$ref" --not refs/upstream/main |
+  local ref=${1:-HEAD} base_tag file
+  base_tag=$(base "$ref")
+  git log --no-merges --format= --name-only --diff-filter=AMR "$ref" --not "refs/upstream-tags/$base_tag" |
     sort -u | grep -E '\.test\.tsx?$' | while read -r file; do
     if git cat-file -e "$ref:$file" 2>/dev/null; then echo "$file"; fi
   done
