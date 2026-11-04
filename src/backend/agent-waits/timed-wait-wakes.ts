@@ -16,9 +16,9 @@ export interface TimedWaitWakesHooks {
    */
   taskFor(wait: AgentWait): string | null;
   /**
-   * Queues the wake in the agent's own chat, or in the task `taskId`, and returns its delivery id. The
-   * same key gives the same delivery, so a pass that stopped before it marked the waits does not queue
-   * a second wake.
+   * Queues the wake in the agent's own chat, or in the task `taskId`, and returns its delivery id. It
+   * does not start the drain: the waits are marked first (`wakeQueued`). The same key gives the same
+   * delivery, so a pass that stopped before it marked the waits does not queue a second wake.
    */
   enqueueWake(
     agentId: string,
@@ -26,6 +26,8 @@ export interface TimedWaitWakesHooks {
     text: string,
     idempotencyKey: string,
   ): Effect.Effect<string, { readonly cause: unknown }>;
+  /** Starts the drain of the agent, after the waits are marked with their wake. */
+  wakeQueued(agentId: string): void;
   /** The open waits of this agent changed. */
   changed(agentId: string): void;
   emitError(code: string, error: unknown, agentId: string): void;
@@ -105,10 +107,17 @@ export class TimedWaitWakes implements RoutineDueSource {
           agentId,
           taskId,
           waking.map((wait) => wait.note).join("\n\n"),
-          `wait-wake:${first.id}:${first.wakeAt}`,
+          // The count of time wakes, not the time: a retry moves the time, and must find the same wake.
+          `wait-wake:${first.id}:${first.timeWakes ?? 0}`,
         )
         .pipe(
-          Effect.map((deliveryId) => this.#store.markWokenByTime(agentId, wakingIds, deliveryId)),
+          // The waits are marked before the drain can start the wake, so its input names them.
+          Effect.tap((deliveryId) =>
+            Effect.sync(() => {
+              this.#store.markWokenByTime(agentId, wakingIds, deliveryId);
+              this.#hooks.wakeQueued(agentId);
+            }),
+          ),
           Effect.catch((failure) =>
             Effect.sync(() => {
               this.#hooks.emitError("timed_wait_wake_failed", failure.cause, agentId);

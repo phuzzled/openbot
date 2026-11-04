@@ -698,6 +698,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         enqueueWake: (agentId, taskId, text, idempotencyKey) =>
           this.#enqueueWaitWake(agentId, taskId, text, idempotencyKey),
+        wakeQueued: (agentId) => {
+          this.#mailboxSync.emitQueue(agentId);
+          this.#drain.scheduleDrain(agentId);
+        },
         changed: (agentId) => this.#emit({ type: "waits-changed", snapshot: this.#waits.list(agentId) }),
         emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       },
@@ -2795,19 +2799,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       .pipe(Effect.mapError((failure) => ({ cause: failure.cause })));
     const deliveryId = receipt.deliveries[0]?.id;
     if (!deliveryId) return yield* Effect.fail({ cause: new Error("Unable to create the wait wake delivery.") });
-    yield* Effect.try({
-      try: () => {
-        // A task shows its queue in its own panel, as the brief of `start_task` does.
-        if (!taskId) {
-          const snapshot = this.#conversation.ensureSnapshot(agentId, agent.threadId);
-          this.#mailboxSync.syncMailboxMessages(snapshot);
-          this.#conversation.emitConversation(snapshot);
-        }
-        this.#mailboxSync.emitQueue(agentId);
-        this.#drain.scheduleDrain(agentId);
-      },
-      catch: (cause) => ({ cause }),
-    });
+    // The wake is queued. A chat that cannot show it now does not undo it: the waits must be marked
+    // with this delivery, so the failure is reported and the delivery id still returns.
+    try {
+      // A task shows its queue in its own panel, as the brief of `start_task` does.
+      if (!taskId) {
+        const snapshot = this.#conversation.ensureSnapshot(agentId, agent.threadId);
+        this.#mailboxSync.syncMailboxMessages(snapshot);
+        this.#conversation.emitConversation(snapshot);
+      }
+    } catch (error) {
+      this.#emitError("timed_wait_wake_failed", error, agentId);
+    }
     return deliveryId;
   }, Effect.uninterruptible);
 

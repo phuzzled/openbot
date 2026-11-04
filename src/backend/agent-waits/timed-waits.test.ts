@@ -77,6 +77,11 @@ function harness(options: { hasRoutine?: boolean } = {}) {
   let hidden = false;
   /** The task of each wait, by its note: the lane that `TimedWaitWakes` wakes it in. */
   const taskOfNote = new Map<string, string>();
+  /** The wake of each idempotency key, as the mailbox keeps it, and the next enqueue that fails after it. */
+  const wakeByKey = new Map<string, string>();
+  let failAfterEnqueue = false;
+  /** For each drain start: the number of waits that the newest wake had marked by then. */
+  const drains: number[] = [];
   const wakes = () =>
     new TimedWaitWakes({
       store,
@@ -85,15 +90,26 @@ function harness(options: { hasRoutine?: boolean } = {}) {
         mayWake: () => !hidden,
         taskFor: (wait) => taskOfNote.get(wait.note) ?? null,
         enqueueWake: (agentId, taskId, text, key) =>
-          Effect.sync(() => {
-            const id = `wake-${enqueued.length + 1}`;
-            enqueued.push({ agentId, text, key, ...(taskId ? { taskId } : {}) });
-            deliveries.set(
-              id,
-              delivery(id, { sender: { kind: "agent", agentId }, text, expectsReply: false, status: "queued" }),
-            );
-            return id;
+          Effect.suspend(() => {
+            let id = wakeByKey.get(key);
+            if (!id) {
+              id = `wake-${enqueued.length + 1}`;
+              wakeByKey.set(key, id);
+              enqueued.push({ agentId, text, key, ...(taskId ? { taskId } : {}) });
+              deliveries.set(
+                id,
+                delivery(id, { sender: { kind: "agent", agentId }, text, expectsReply: false, status: "queued" }),
+              );
+            }
+            if (failAfterEnqueue) {
+              failAfterEnqueue = false;
+              return Effect.fail({ cause: new Error("The chat did not update.") });
+            }
+            return Effect.succeed(id);
           }),
+        wakeQueued: () => {
+          drains.push(store.wokenBy(`wake-${enqueued.length}`).length);
+        },
         changed: () => {},
         emitError: () => {},
       },
@@ -123,6 +139,10 @@ function harness(options: { hasRoutine?: boolean } = {}) {
     wakes,
     call,
     enqueued,
+    drains,
+    failNextAfterEnqueue: () => {
+      failAfterEnqueue = true;
+    },
     taskOfNote,
     turns,
     deliveries,
@@ -210,9 +230,7 @@ describe("timed wait wakes", () => {
     test.setNow(due);
     await Effect.runPromise(wakes.processDue(due, () => true));
     await Effect.runPromise(wakes.processDue(due, () => true));
-    expect(test.enqueued).toEqual([
-      { agentId: AGENT, text: "Check the deploy", key: `wait-wake:${wait?.id}:${wait?.wakeAt}` },
-    ]);
+    expect(test.enqueued).toEqual([{ agentId: AGENT, text: "Check the deploy", key: `wait-wake:${wait?.id}:0` }]);
     expect(test.store.list(AGENT)).toMatchObject([
       { id: wait?.id, wakeAt: null, wakeDeliveryId: "wake-1", wokenAt: due.toISOString() },
     ]);
@@ -368,6 +386,31 @@ describe("time wake limit", () => {
     }
     expect(test.store.list(AGENT)).toMatchObject([{ timeWakes: TIME_WAKES_MAX, wakeAt: null }]);
     expect(test.enqueued).toHaveLength(TIME_WAKES_MAX);
+  });
+});
+
+describe("wake delivery order", () => {
+  it("marks the waits before the drain starts the wake", async () => {
+    const test = harness();
+    test.call({ note: "Check the deploy", wakeAfterMinutes: 30 });
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    await Effect.runPromise(test.wakes().processDue(due, () => true));
+    expect(test.drains).toEqual([1]);
+  });
+
+  it("finds the same wake again after a failure that came after the wake was queued", async () => {
+    const test = harness();
+    test.call({ note: "Check the deploy", wakeAfterMinutes: 30 });
+    const wakes = test.wakes();
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    test.failNextAfterEnqueue();
+    await Effect.runPromise(wakes.processDue(due, () => true));
+    expect(test.store.list(AGENT)[0]?.wakeDeliveryId).toBeNull();
+    // The retry comes 5 minutes later, with a new time.
+    const retry = new Date(due.getTime() + 6 * MINUTE);
+    await Effect.runPromise(wakes.processDue(retry, () => true));
+    expect(test.enqueued).toHaveLength(1);
+    expect(test.store.list(AGENT)).toMatchObject([{ wakeDeliveryId: "wake-1", timeWakes: 1, wakeAt: null }]);
   });
 });
 
