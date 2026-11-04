@@ -530,7 +530,6 @@ export class TurnLifecycle {
     return this.#completingTurns.has(turnId);
   }
 
-  /** The task of a provider thread, or null for the agent's own chat and its other threads. */
   /** Tells the wait owner when the user stopped a turn that served wakes of timed waits. */
   #wakeStopped(agentId: string, taskId: string | null, turnId: string, deliveries: readonly DeliveryContext[]): void {
     const wakes = deliveries.filter(({ delivery }) => isWaitWakeDelivery(delivery)).map(({ delivery }) => delivery.id);
@@ -538,6 +537,7 @@ export class TurnLifecycle {
       this.#hooks.waitWakeStopped(agentId, wakes);
   }
 
+  /** The task of a provider thread, or null for the agent's own chat and its other threads. */
   #taskForThread(agentId: string, externalThreadId: string): string | null {
     const threadId = this.#conversation.publicThreadId(agentId, externalThreadId);
     return this.#conversation.isTaskThread(threadId) ? this.#hooks.taskForThread(threadId) : null;
