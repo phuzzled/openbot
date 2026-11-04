@@ -95,6 +95,7 @@ function harness(options: { hasRoutine?: boolean } = {}) {
     new TimedWaitWakes({
       store,
       mailbox,
+      now: clock,
       hooks: {
         mayWake: () => !hidden,
         taskFor: (wait) => taskOfNote.get(wait.note) ?? null,
@@ -277,16 +278,57 @@ describe("timed wait wakes", () => {
     expect(test.enqueued).toHaveLength(1);
   });
 
-  it("spends the time of a wait that a pending run already continues", async () => {
+  it("keeps the time of a wait that a pending run continues, and wakes it once after that run", async () => {
     const test = harness({ hasRoutine: true });
     test.call({ note: "Check the deploy", wakeAfterMinutes: 30 });
     const [wait] = test.store.list(AGENT);
+    const wakeAt = wait?.wakeAt;
     test.deliveries.set("routine-run", delivery("routine-run", { status: "queued" }));
     test.store.markWoken(AGENT, [wait?.id ?? ""], "routine-run");
     const wakes = test.wakes();
-    await Effect.runPromise(wakes.processDue(new Date(START.getTime() + 31 * MINUTE), () => true));
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    test.setNow(due);
+    await Effect.runPromise(wakes.processDue(due, () => true));
     expect(test.enqueued).toEqual([]);
-    expect(test.store.list(AGENT)).toMatchObject([{ wakeAt: null, wakeDeliveryId: "routine-run" }]);
+    expect(test.store.list(AGENT)).toMatchObject([{ wakeAt, wakeDeliveryId: "routine-run" }]);
+    expect(wakes.nextDueAt()).toBeNull();
+    test.deliveries.set("routine-run", delivery("routine-run", { status: "completed" }));
+    expect(wakes.nextDueAt()).toBe(wakeAt);
+    await Effect.runPromise(wakes.processDue(due, () => true));
+    await Effect.runPromise(wakes.processDue(due, () => true));
+    expect(test.enqueued).toHaveLength(1);
+  });
+
+  it("keeps the new time of a wake turn that runs past it, and wakes the wait once after that turn", async () => {
+    const test = harness();
+    test.call({ note: "Check vendor replies", wakeAfterMinutes: 30 });
+    const waitId = test.store.list(AGENT)[0]?.id ?? "";
+    const wakes = test.wakes();
+    const due = new Date(START.getTime() + 31 * MINUTE);
+    test.setNow(due);
+    await Effect.runPromise(wakes.processDue(due, () => true));
+    const wake = test.deliveries.get("wake-1");
+    if (!wake) throw new Error("The wake delivery is missing.");
+    test.deliveries.set("wake-1", { ...wake, delivery: { ...wake.delivery, status: "running" } });
+    test.turns.set("turn-2", [wake]);
+    expect(test.call({ note: "Check again", wakeAfterMinutes: 5 }, "turn-2").success).toBe(true);
+    const next = new Date(due.getTime() + 5 * MINUTE).toISOString();
+    // The wake turn still runs when its new time comes: the wait keeps that time.
+    const during = new Date(due.getTime() + 6 * MINUTE);
+    test.setNow(during);
+    await Effect.runPromise(wakes.processDue(during, () => true));
+    expect(test.store.list(AGENT)).toMatchObject([{ id: waitId, wakeAt: next, timeWakes: 1 }]);
+    expect(wakes.nextDueAt()).toBeNull();
+    expect(test.enqueued).toHaveLength(1);
+    // The turn completes. The next pass wakes the wait once.
+    test.deliveries.set("wake-1", { ...wake, delivery: { ...wake.delivery, status: "completed" } });
+    expect(wakes.nextDueAt()).toBe(next);
+    const after = new Date(due.getTime() + 7 * MINUTE);
+    test.setNow(after);
+    await Effect.runPromise(wakes.processDue(after, () => true));
+    await Effect.runPromise(wakes.processDue(after, () => true));
+    expect(test.enqueued.map((item) => item.key)).toEqual([`wait-wake:${waitId}:0`, `wait-wake:${waitId}:1`]);
+    expect(test.store.list(AGENT)).toMatchObject([{ wakeAt: null, timeWakes: 2, wakeDeliveryId: "wake-2" }]);
   });
 
   it("lets the run that a wake started set the next wake of the same wait", async () => {

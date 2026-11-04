@@ -12,3 +12,5 @@
   minutes later, so the follow-up is not lost.
   When the agent closes a wait in a check-back and opens a new one, the new wait keeps your request
   and the count of check-backs.
+  When a check-back sets a new time and is still busy at that time, OpenBot keeps that time and
+  checks back once when the busy check-back ends. Before, the new time was lost.
