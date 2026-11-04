@@ -35,6 +35,10 @@ export const V34_AGENT_WAIT_SCHEMA_SQL = `
 // change, and every existing wait gets null, which is a wait that only a routine run or a script event
 // wakes, as before. A wait with a time needs no routine. The wake clears it, so it fires once.
 export const V56_AGENT_WAIT_WAKE_AT_COLUMN_SQL = "wake_at TEXT";
+// Migration 56 also adds the number of times the wake time woke the wait, 0 for every existing wait. A
+// wait that has a time, or that a time woke, is a timed wait: a routine run that names no wait does not
+// wake it after its time is spent, and the count limits how often the agent can set a new time.
+export const V56_AGENT_WAIT_TIME_WAKES_COLUMN_SQL = "time_wakes INTEGER NOT NULL DEFAULT 0";
 
 // The latest table, for new databases.
 export const AGENT_WAIT_SCHEMA_SQL = `
@@ -48,7 +52,8 @@ export const AGENT_WAIT_SCHEMA_SQL = `
     created_at TEXT NOT NULL,
     woken_at TEXT,
     wake_delivery_id TEXT,
-    wake_at TEXT
+    wake_at TEXT,
+    time_wakes INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS agent_waits_agent ON agent_waits(agent_id);
   CREATE INDEX IF NOT EXISTS agent_waits_routine ON agent_waits(routine_id) WHERE routine_id IS NOT NULL;

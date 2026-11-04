@@ -149,6 +149,12 @@ slept or the agent was hidden wakes the wait once, at the next chance. In the ru
 `openbot.await_event` with a new time sets the next wake of the same waits. A wait with no time and
 no routine is refused. The chat shows the wake time of each open wait.
 
+A wait that has a time, or that its time woke, is a timed wait. A routine run does not wake it,
+also after its time is spent, unless the wait names that routine with `routineId`. A script event
+that names the wait wakes it. A timed wait that the agent leaves open with no new time stays open
+until the agent sets a new time, a script event names it, or someone closes or cancels it. A wait
+with no time and no `routineId` wakes on every routine run of its agent, as before.
+
 An agent can have at most 20 open waits. `openbot.list_waits` shows an agent's open waits with their
 IDs and wake times, and `openbot.close_wait` closes one by ID. With `agentId`, both tools act on another local
 agent's waits, as the routine tools do. `openbot.list_agents` shows `openWaits` for each agent that

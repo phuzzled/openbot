@@ -55,19 +55,25 @@ function contents(db: DatabaseSync): Record<string, unknown[]> {
   return Object.fromEntries(tables.map((table) => [table, db.prepare(`SELECT * FROM "${table}"`).all()]));
 }
 
-/** The rows before, with the new column set to null on every wait. */
+/** The rows before, with no wake time and no time wake on every wait. */
 function withEmptyWakeAt(before: Record<string, unknown[]>): Record<string, unknown[]> {
   return {
     ...before,
-    agent_waits: (before.agent_waits ?? []).map((row) => (isDynamicRecord(row) ? { ...row, wake_at: null } : row)),
+    agent_waits: (before.agent_waits ?? []).map((row) =>
+      isDynamicRecord(row) ? { ...row, wake_at: null, time_wakes: 0 } : row,
+    ),
   };
 }
 
-function hasWakeAt(db: DatabaseSync): boolean {
+function hasColumn(db: DatabaseSync, name: string): boolean {
   return db
     .prepare("PRAGMA table_info(agent_waits)")
     .all()
-    .some((column) => column.name === "wake_at");
+    .some((column) => column.name === name);
+}
+
+function hasWakeAt(db: DatabaseSync): boolean {
+  return hasColumn(db, "wake_at") || hasColumn(db, "time_wakes");
 }
 
 function expectHealthy(db: DatabaseSync): void {
@@ -130,9 +136,23 @@ describe("agent wait wake time migration", () => {
     db.exec("ALTER TABLE agent_waits ADD COLUMN wake_at TEXT");
     db.prepare("UPDATE agent_waits SET wake_at = '2026-02-01T00:00:00.000Z' WHERE wait_id = 'wait-1'").run();
     migrateOpenBotDatabase(db);
-    expect(db.prepare("SELECT wait_id, wake_at FROM agent_waits ORDER BY wait_id").all()).toEqual([
-      { wait_id: "wait-1", wake_at: "2026-02-01T00:00:00.000Z" },
-      { wait_id: "wait-2", wake_at: null },
+    expect(db.prepare("SELECT wait_id, wake_at, time_wakes FROM agent_waits ORDER BY wait_id").all()).toEqual([
+      { wait_id: "wait-1", wake_at: "2026-02-01T00:00:00.000Z", time_wakes: 0 },
+      { wait_id: "wait-2", wake_at: null, time_wakes: 0 },
+    ]);
+    expectHealthy(db);
+  });
+
+  it("keeps both columns that a development profile added before the version shipped", () => {
+    const db = databaseAt(55);
+    seed(db);
+    db.exec("ALTER TABLE agent_waits ADD COLUMN wake_at TEXT");
+    db.exec("ALTER TABLE agent_waits ADD COLUMN time_wakes INTEGER NOT NULL DEFAULT 0");
+    db.prepare("UPDATE agent_waits SET time_wakes = 3 WHERE wait_id = 'wait-2'").run();
+    migrateOpenBotDatabase(db);
+    expect(db.prepare("SELECT wait_id, time_wakes FROM agent_waits ORDER BY wait_id").all()).toEqual([
+      { wait_id: "wait-1", time_wakes: 0 },
+      { wait_id: "wait-2", time_wakes: 3 },
     ]);
     expectHealthy(db);
   });

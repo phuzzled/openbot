@@ -16,6 +16,7 @@ import {
 import {
   AGENT_WAIT_SCHEMA_SQL,
   V34_AGENT_WAIT_SCHEMA_SQL,
+  V56_AGENT_WAIT_TIME_WAKES_COLUMN_SQL,
   V56_AGENT_WAIT_WAKE_AT_COLUMN_SQL,
 } from "./agent-waits/agent-wait-schema";
 import { BROWSER_PROFILE_SCHEMA_SQL } from "./browser-profiles/browser-profile-schema";
@@ -951,8 +952,8 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
   },
   {
     version: 56,
-    // Adds one column with no default: no rebuild, so no foreign-key pause and no vacuum. Every existing
-    // wait gets null, which is a wait with no wake time, as it was before.
+    // Adds two columns: no rebuild, so no foreign-key pause and no vacuum. Every existing wait gets a
+    // null wake time and a wake count of 0, which is a wait with no wake time, as it was before.
     up: addAgentWaitWakeAt,
   },
 ];
@@ -1355,12 +1356,13 @@ function addAgentThreadRoutine(db: DatabaseSync): void {
   db.exec(V54_AGENT_THREAD_ROUTINE_INDEX_SQL);
 }
 
-// Migration 56 lets a wait wake at a time, with no routine.
+// Migration 56 lets a wait wake at a time, with no routine, and counts the wakes of that time.
 function addAgentWaitWakeAt(db: DatabaseSync): void {
-  // A development profile that ran this version before it shipped has the column already.
+  // A development profile that ran this version before it shipped can have a column already.
   const columns = db.prepare("PRAGMA table_info(agent_waits)").all();
-  if (!columns.some((existing) => isDynamicRecord(existing) && existing.name === "wake_at"))
-    db.exec(`ALTER TABLE agent_waits ADD COLUMN ${V56_AGENT_WAIT_WAKE_AT_COLUMN_SQL}`);
+  const has = (name: string) => columns.some((existing) => isDynamicRecord(existing) && existing.name === name);
+  if (!has("wake_at")) db.exec(`ALTER TABLE agent_waits ADD COLUMN ${V56_AGENT_WAIT_WAKE_AT_COLUMN_SQL}`);
+  if (!has("time_wakes")) db.exec(`ALTER TABLE agent_waits ADD COLUMN ${V56_AGENT_WAIT_TIME_WAKES_COLUMN_SQL}`);
 }
 
 // Migration 28 removes the provider CHECK. It rebuilds the table with no guard: every shipped table has the

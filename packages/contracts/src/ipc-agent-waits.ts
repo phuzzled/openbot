@@ -17,7 +17,10 @@ export interface AgentWait {
   /** The message the wait serves. Its id is the transcript message id. */
   requestMessageId: string;
   requestText: string;
-  /** The one routine whose runs wake the wait. Null: every routine run of the agent wakes it. */
+  /**
+   * The one routine whose runs wake the wait. Null: every routine run of the agent wakes it, unless
+   * it is a timed wait (`wakeAt` or `timeWakes`), which only its time or a script event wakes.
+   */
   routineId: string | null;
   createdAt: string;
   /** The last run that woke the wait. The wait stays open until the agent closes it. */
@@ -28,6 +31,8 @@ export interface AgentWait {
    * it. The wake clears it. Absent from a host older than this field, which means null.
    */
   wakeAt?: string | null;
+  /** How often the wake time woke the wait. Absent from a host older than this field, which means 0. */
+  timeWakes?: number;
 }
 
 export interface AgentWaitsSnapshot {
@@ -52,7 +57,9 @@ function isAgentWait(value: unknown): value is AgentWait {
     isBoundedString(value.createdAt, 160) &&
     (value.wokenAt === null || isBoundedString(value.wokenAt, 160)) &&
     (value.wakeDeliveryId === null || isIdentifier(value.wakeDeliveryId)) &&
-    (value.wakeAt === undefined || value.wakeAt === null || isBoundedString(value.wakeAt, 160))
+    (value.wakeAt === undefined || value.wakeAt === null || isBoundedString(value.wakeAt, 160)) &&
+    (value.timeWakes === undefined ||
+      (typeof value.timeWakes === "number" && Number.isSafeInteger(value.timeWakes) && value.timeWakes >= 0))
   );
 }
 
