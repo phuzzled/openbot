@@ -20,8 +20,8 @@
  *   next month; "in March": 09:00 on the 1st of the next March (not the month of now); "2026-12-01":
  *   09:00 that day, when it is ahead.
  * - Another time word that this does not read ("end of week", "this week", "next quarter", "over the
- *   weekend", a date that is not ahead): `UNREAD_TIME`. The sweep then drops the check: no nudge is
- *   better than a nudge before the time that the agent named.
+ *   weekend", a date that is not ahead): a late check, 09:00 seven days from today
+ *   (`UNREAD_TIME_DAYS`). It never comes early for a time inside the week, and the promise is not lost.
  * - A promise with no time word: null, and the normal grace applies.
  *
  * Not handled (review 7, T1): a time zone ("at 9am PT" is 09:00 here); a weekday said on that day ("on
@@ -29,8 +29,8 @@
  * deadline ends); "tonight" said after 20:00 (now).
  */
 
-/** A time word that `promiseTime` does not read. */
-export const UNREAD_TIME = "unread";
+/** The days after which a promise with a time word that `promiseTime` does not read is checked. */
+export const UNREAD_TIME_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60_000;
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -157,10 +157,10 @@ function partHour(text: string, fallback: number): number {
 }
 
 /**
- * The time that the promise names, as a date not before `now`, null when it names no time, or
- * `UNREAD_TIME` when it names a time that this does not read. See the file comment for the rules.
+ * The time that the promise names, as a date not before `now`, or null when it names no time. A time
+ * that this does not read gives the late check of `UNREAD_TIME_DAYS`. See the file comment for the rules.
  */
-export function promiseTime(text: string, now: Date): Date | null | typeof UNREAD_TIME {
+export function promiseTime(text: string, now: Date): Date | null {
   const later = (time: Date) => (time.getTime() < now.getTime() ? now : time);
   const relative = RELATIVE.exec(text);
   if (relative) {
@@ -203,6 +203,6 @@ export function promiseTime(text: string, now: Date): Date | null | typeof UNREA
   const date = dateOf(text, now);
   if (date) return date;
   if (OTHER_TIME.test(text) || DAY_OF_MONTH.test(text) || IN_MONTH.test(text) || ISO_DATE.test(text))
-    return UNREAD_TIME;
+    return timed(addDays(now, UNREAD_TIME_DAYS), 9);
   return null;
 }

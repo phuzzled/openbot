@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { cutStallRequest, stallNudgeText } from "../agent/delivery-content";
 import { turnLeavesWaitOpen } from "../agent-waits/agent-waits";
 import type { RoutineDueSource } from "../routine-timer";
-import { promiseTime, UNREAD_TIME } from "./promise-time";
+import { promiseTime } from "./promise-time";
 import type { StallCheck, StallCheckStore } from "./stall-check-store";
 import { detectStall, type StallInput } from "./stall-detection";
 
@@ -47,10 +47,10 @@ const PROMISE_REASON = 'You wrote: "';
 
 /**
  * The time that the promise of a check names (`promiseTime`), read again from its reason and its
- * creation time, or null: an open-steps check, or a promise with no time word. `UNREAD_TIME` when the
- * promise names a time that `promiseTime` does not read: `turnEnded` makes no check for it.
+ * creation time, or null: an open-steps check, or a promise with no time word. A time word that
+ * `promiseTime` does not read gives a late check (`UNREAD_TIME_DAYS`).
  */
-export function stallCheckNamedTime(check: Pick<StallCheck, "reason" | "createdAt">): Date | null | typeof UNREAD_TIME {
+export function stallCheckNamedTime(check: Pick<StallCheck, "reason" | "createdAt">): Date | null {
   if (!check.reason.startsWith(PROMISE_REASON)) return null;
   return promiseTime(check.reason.slice(PROMISE_REASON.length), new Date(check.createdAt));
 }
@@ -237,15 +237,6 @@ export class StallSweep implements RoutineDueSource {
     // A promise that names a time ("Tomorrow I'll pay the supplier") is checked after that time.
     const named =
       stall.kind === "promise" ? stallCheckNamedTime({ reason: stall.reason, createdAt: now.toISOString() }) : null;
-    // A time that this cannot read ("end of week", "next quarter"): no check. A nudge before the time
-    // that the agent named would be wrong, and the sweep is only a hint.
-    if (named === UNREAD_TIME) {
-      if (lane) {
-        this.#store.delete(lane.id);
-        this.#hooks.changed();
-      }
-      return;
-    }
     const dueMs = Math.max(
       now.getTime() + (nudges === 0 ? STALL_GRACE_MS : STALL_REPEAT_MS),
       named ? named.getTime() + STALL_GRACE_MS : 0,
