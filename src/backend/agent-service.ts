@@ -254,7 +254,7 @@ import type { RoutineHoldWindow } from "./routine-store";
 import { type RoutineDueSource, RoutineTimer } from "./routine-timer";
 import type { SidebarLayoutStore } from "./sidebar-layout-store";
 import { StallCheckStore } from "./stall-sweep/stall-check-store";
-import { STALL_ALERT_ITEM_TYPE, StallSweep } from "./stall-sweep/stall-sweep";
+import { STALL_ALERT_ITEM_TYPE, StallSweep, waitBacksStallCheck } from "./stall-sweep/stall-sweep";
 import type { VaultItems } from "./vault-items";
 import type { WorkflowRunEnd } from "./workflows/workflows";
 import {
@@ -709,7 +709,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         laneOpen: (_agentId, taskId) => taskId === null || this.#tasks.threadId(taskId) !== null,
         laneBusy: (agentId, taskId) =>
           mailbox.laneActive(agentId, taskId) || mailbox.laneQueuedIds(agentId, taskId).length > 0,
-        laneHasOpenWait: (agentId, taskId) => this.#laneHasOpenWait(agentId, taskId),
+        waitBacksCheck: (check) =>
+          waitBacksStallCheck(this.#waits.list(check.agentId).waits, check, (wait) => this.#waitLane(wait)),
         userMessagedSince: (agentId, since) =>
           mailbox
             .listQueue(agentId)
@@ -1551,9 +1552,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               stopped:
                 this.#stoppedTurn(turn.agentId, turn.taskId) === turn.turnId ||
                 (turn.taskId === null && this.#requestedNewChats.has(turn.agentId)),
-              waitOpen:
-                turnLeavesWaitOpen(this.#waits.list(turn.agentId).waits, deliveryIds) ||
-                this.#laneHasOpenWait(turn.agentId, turn.taskId),
+              // Only a wait of this turn's request chain backs it. An older wait of the lane does not.
+              waitOpen: turnLeavesWaitOpen(this.#waits.list(turn.agentId).waits, deliveryIds),
               waitsForAttention: this.#attention.hasAttentionFor(turn.agentId),
               openSteps: (turn.plan?.steps ?? [])
                 .filter((step) => step.status !== "completed")
@@ -2797,11 +2797,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #waitLane(wait: AgentWait): string | null {
     const taskId = this.#mailbox.taskIdForDelivery(wait.requestMessageId);
     return taskId !== null && this.#tasks.threadId(taskId) !== null ? taskId : null;
-  }
-
-  /** Whether an open wait of the agent wakes in this lane. */
-  #laneHasOpenWait(agentId: string, taskId: string | null): boolean {
-    return this.#waits.list(agentId).waits.some((wait) => this.#waitLane(wait) === taskId);
   }
 
   /**

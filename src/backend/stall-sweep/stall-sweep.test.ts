@@ -1,12 +1,13 @@
 // @vitest-environment node
 import { DatabaseSync } from "node:sqlite";
-import type { QueueDeliveryStatus } from "@openbot/contracts/ipc";
+import type { AgentWait, QueueDeliveryStatus } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   isStallNudgeDelivery,
   isWaitWakeDelivery,
   STALL_NUDGE_HEADER,
+  STALL_NUDGE_REQUEST_MAX,
   stallNudgeText,
 } from "../agent/delivery-content";
 import { applyForkSchema } from "../database/fork-schema";
@@ -16,12 +17,14 @@ import { detectStall, followUpPromise, type StallInput } from "./stall-detection
 import {
   STALL_DAILY_LIMIT,
   STALL_GRACE_MS,
+  STALL_MAX_AGE_MS,
   STALL_NUDGE_LIMIT,
   STALL_REPEAT_MS,
   StallSweep,
   type StallSweepHooks,
   type StallTurn,
   stallSweepEnabled,
+  waitBacksStallCheck,
 } from "./stall-sweep";
 
 describe("followUpPromise", () => {
@@ -37,6 +40,19 @@ describe("followUpPromise", () => {
     "**I'll get back to you** with the numbers.",
     "Will update you when the job finishes.",
     "I'm going to circle back after lunch.",
+    // Common phrasings (review 4, M4).
+    "I'll check on it in 10 minutes.",
+    "I'll be back with the numbers.",
+    "I'll get back to you on the price.",
+    "Done for today; tomorrow I'll compare the quotes.",
+    "Later today I'll send the summary.",
+    "I will report back.",
+    "I'll keep you posted.",
+    "I'll keep you updated.",
+    "I'll circle back.",
+    "Gonna check back in an hour.",
+    // The agent's own prose after a quoted draft still counts.
+    "Here is the draft:\n\n> I'll follow up next week.\n\nI'll let you know when Sam replies.",
   ])("finds a promise in %j", (answer) => {
     expect(followUpPromise(answer)).not.toBeNull();
   });
@@ -52,6 +68,27 @@ describe("followUpPromise", () => {
     "I'll let you know if I find anything else, but the task is done.",
     "The report is attached.",
     "I'll now run the tests.",
+    // Conditional on the user (review 4, H1).
+    "Here is the migration plan. When you are ready, I'll start the migration.",
+    "Once you reply with the dates, I'll book it.",
+    "As soon as you confirm, I'll send it.",
+    "After you approve, I'll deploy.",
+    "If you want, I'll keep an eye on it.",
+    "Let me know and I'll follow up with Sam.",
+    "As soon as you answer, I'll continue with the rollout.",
+    "I'll check back once you have looked at it.",
+    // Text that the agent drafts for someone else (review 4, M1).
+    "Here's a draft reply to Sam:\n\n> Thanks for the quote. I'll get back to you by Friday.\n> Cheers,\n> Andrew",
+    "Hi team, we will keep you posted on the launch.\n\nRegards,\nAndrew",
+    "Draft:\n\nHi Sam, I'll follow up next week.",
+    "Subject: Launch update\n\nWe'll keep you posted.",
+    'Done:\n\n```\necho "I\'ll let you know"\n```',
+    'You wrote: "I\'ll let you know when they reply." I fixed the typo.',
+    // Past tense, questions, a day off.
+    "I checked on it yesterday and got back to the vendor.",
+    "Should I check on it in 10 minutes?",
+    "Do you want me to circle back tomorrow?",
+    "Tomorrow I'll be off.",
     "",
   ])("finds no promise in %j", (answer) => {
     expect(followUpPromise(answer)).toBeNull();
@@ -111,6 +148,13 @@ describe("stall nudge text", () => {
       limit: 2,
     });
     expect(text.startsWith(STALL_NUDGE_HEADER)).toBe(true);
+    // The first instruction stops an agent that waits for the user, before any action.
+    const lines = text.split("\n");
+    const waitLine = lines.findIndex((line) => line.includes("if you wait for the user's answer or approval"));
+    expect(waitLine).toBe(3);
+    expect(lines[waitLine]).toContain("stop");
+    expect(lines.findIndex((line) => line.startsWith("- Finish"))).toBeGreaterThan(waitLine);
+    expect(text).toContain("Never do an action that the user did not approve");
     for (const part of [
       "openbot.await_event",
       "wakeAfterMinutes",
@@ -128,6 +172,12 @@ describe("stall nudge text", () => {
     expect(isWaitWakeDelivery(delivery)).toBe(true);
     expect(isStallNudgeDelivery(delivery)).toBe(true);
     expect(isStallNudgeDelivery({ ...delivery, text: "Check vendor replies" })).toBe(false);
+  });
+
+  it("cuts a long request", () => {
+    const text = stallNudgeText({ reason: "r", requestText: "x".repeat(50_000), nudge: 1, limit: 2 });
+    expect(text.endsWith("…(cut)")).toBe(true);
+    expect(text.length).toBeLessThan(STALL_NUDGE_REQUEST_MAX + 2000);
   });
 
   it("is on unless OPENBOT_STALL_SWEEP is 0", () => {
@@ -158,7 +208,7 @@ describe("StallSweep", () => {
       providerReady: true,
       laneOpen: true,
       laneBusy: false,
-      laneHasOpenWait: false,
+      waitBacks: false,
       userMessaged: false,
       statuses: new Map<string, QueueDeliveryStatus>(),
       nudges,
@@ -170,7 +220,7 @@ describe("StallSweep", () => {
       providerReady: () => state.providerReady,
       laneOpen: () => state.laneOpen,
       laneBusy: () => state.laneBusy,
-      laneHasOpenWait: () => state.laneHasOpenWait,
+      waitBacksCheck: () => state.waitBacks,
       userMessagedSince: () => state.userMessaged,
       deliveryStatus: (id) => state.statuses.get(id),
       enqueueNudge: (agentId, taskId, text, key) => {
@@ -313,9 +363,9 @@ describe("StallSweep", () => {
       },
     ],
     [
-      "a wait is open in the lane",
+      "a wait backs the check",
       (state) => {
-        state.laneHasOpenWait = true;
+        state.waitBacks = true;
       },
     ],
     [
@@ -441,5 +491,109 @@ describe("StallSweep", () => {
     expect(state.nudges).toEqual([]);
     expect(state.alerts).toHaveLength(1);
     expect(store.all()).toEqual([]);
+  });
+
+  it.each<[string, Partial<StallTurn>]>([
+    [
+      "a teammate's message",
+      {
+        deliveries: [
+          { id: "fyi", sender: { kind: "agent", agentId: "helper" }, recipientAgentId: "chief", text: "FYI" },
+        ],
+      },
+    ],
+    ["a turn with no delivery", { deliveries: [] }],
+    [
+      "a teammate's message that continues a plan",
+      {
+        continued: true,
+        deliveries: [
+          { id: "fyi", sender: { kind: "agent", agentId: "helper" }, recipientAgentId: "chief", text: "FYI" },
+        ],
+      },
+    ],
+  ])("keeps the lane's check after %s, and still nudges", async (_name, change) => {
+    const { store, state, sweep, advance, fire } = setup();
+    sweep.turnEnded(userTurn());
+    const before = store.forLane("chief", null);
+    sweep.turnEnded(userTurn({ turnId: "turn-2", answer: "Noted.", ...change }));
+    expect(store.forLane("chief", null)).toEqual(before);
+    advance(STALL_GRACE_MS);
+    await fire();
+    expect(state.nudges).toHaveLength(1);
+  });
+
+  it("ends a check older than the age limit with no nudge, also while the agent is hidden", async () => {
+    const { store, state, sweep, advance, fire } = setup();
+    sweep.turnEnded(userTurn());
+    state.mayWake = false;
+    advance(STALL_MAX_AGE_MS + 60_000);
+    await fire();
+    expect(store.all()).toEqual([]);
+    state.mayWake = true;
+    await fire();
+    expect(state.nudges).toEqual([]);
+    expect(store.all()).toEqual([]);
+  });
+
+  it("nudges a check just inside the age limit", async () => {
+    const { state, sweep, advance, fire } = setup();
+    sweep.turnEnded(userTurn());
+    state.mayWake = false;
+    advance(STALL_MAX_AGE_MS - 60_000);
+    await fire();
+    state.mayWake = true;
+    await fire();
+    expect(state.nudges).toHaveLength(1);
+  });
+
+  it("keeps a cut request in the check", () => {
+    const { store, sweep } = setup();
+    sweep.turnEnded(
+      userTurn({
+        deliveries: [
+          { id: "request-1", sender: { kind: "user" }, recipientAgentId: "chief", text: "y".repeat(50_000) },
+        ],
+      }),
+    );
+    expect(store.forLane("chief", null)?.requestText.length).toBeLessThan(STALL_NUDGE_REQUEST_MAX + 10);
+  });
+});
+
+describe("waitBacksStallCheck", () => {
+  const check = {
+    agentId: "chief",
+    taskId: null,
+    requestDeliveryId: "request-1",
+    nudgeDeliveryId: "nudge-1",
+    createdAt: "2026-11-01T10:00:00.000Z",
+  };
+  const wait = (change: Partial<AgentWait>): AgentWait => ({
+    id: "w",
+    agentId: "chief",
+    note: "Check the domain renewal",
+    requestMessageId: "old-request",
+    requestText: "Renew the domain.",
+    routineId: null,
+    createdAt: "2026-11-01T08:00:00.000Z",
+    wokenAt: null,
+    wakeDeliveryId: null,
+    wakeAt: null,
+    ...change,
+  });
+  const inChat = () => null;
+
+  it.each<[string, Partial<AgentWait>, boolean]>([
+    ["an older wait of other work, as one that a Stop left with no time", {}, false],
+    ["a wait of the check's request", { requestMessageId: "request-1" }, true],
+    ["a wait that the nudge opened", { requestMessageId: "nudge-1" }, true],
+    ["a wait that the nudge woke", { wakeDeliveryId: "nudge-1" }, true],
+    ["a wait opened after the check", { createdAt: "2026-11-01T10:05:00.000Z" }, true],
+  ])("%s: %s", (_name, change, backs) => {
+    expect(waitBacksStallCheck([wait(change)], check, inChat)).toBe(backs);
+  });
+
+  it("ignores a wait of another lane", () => {
+    expect(waitBacksStallCheck([wait({ requestMessageId: "request-1" })], check, () => "task-1")).toBe(false);
   });
 });
