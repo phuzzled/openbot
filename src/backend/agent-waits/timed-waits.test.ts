@@ -411,6 +411,22 @@ describe("wake that does not complete", () => {
     },
   );
 
+  it("gives no new time when the user stopped the wake, and keeps the wait open", async () => {
+    const test = harness();
+    const { waitId, due, wakes } = await woken(test);
+    wakes.wakeStopped(AGENT, ["wake-1"]);
+    endWake(test, "wake-1", "interrupted");
+    expect(wakes.nextDueAt()).toBeNull();
+    const later = new Date(due.getTime() + 10 * MINUTE);
+    test.setNow(later);
+    await Effect.runPromise(wakes.processDue(later, () => true));
+    expect(test.store.list(AGENT)).toMatchObject([{ id: waitId, wakeAt: null, timeWakes: 1, wakeDeliveryId: null }]);
+    expect(wakes.nextDueAt()).toBeNull();
+    expect(test.enqueued).toHaveLength(1);
+    // A routine run still does not wake it: it stays a timed wait.
+    expect(test.store.forRoutineRun(AGENT, "routine-1")).toEqual([]);
+  });
+
   it("doubles the delay for each time wake, up to 80 minutes", async () => {
     const test = harness();
     const { waitId } = await woken(test);
