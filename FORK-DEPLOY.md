@@ -1,6 +1,6 @@
 # Fork deploy: the Linux server from phuzzled/openbot
 
-A Linux server (Animus One) that installs from this fork gets the newest upstream OpenBot release
+A Linux server (Animus One) that installs from this fork gets upstream OpenBot `main`
 with the fork changes of `FORK.md` on top, and updates from this fork only. The desktop app on a Mac
 stays on upstream. It is a client of the server, and this pipeline does not build it.
 
@@ -8,24 +8,28 @@ stays on upstream. It is a client of the server, and this pipeline does not buil
 
 | Part | File | What it does |
 |---|---|---|
-| Sync | `.github/workflows/fork-sync.yml` | Every 6 hours (00:21, 06:21, 12:21 and 18:21 UTC), and on a manual run. When upstream has a release tag that `main` does not contain, it merges that tag into `main` in a branch, then runs the desktop typecheck, the unit test files that fork commits touched, and the fork end-to-end checks (`stall-sweep`, `plan-continuation`, `timed-waits`, `timed-waits-followup`, `timed-waits-adversarial`, `agent-waits-tools`). When all pass, it pushes `main`, tags the next fork version, and calls the release. When `main` has fork commits with no release, it does the same with no merge. |
+| Sync | `.github/workflows/fork-sync.yml` | Every 6 hours (00:21, 06:21, 12:21 and 18:21 UTC), and on a manual run. When upstream `main` has commits that `main` does not contain, it merges upstream `main` into `main` in a branch, then runs the desktop typecheck, the unit test files that fork commits touched, and the fork end-to-end checks (`stall-sweep`, `plan-continuation`, `timed-waits`, `timed-waits-followup`, `timed-waits-adversarial`, `agent-waits-tools`). When all pass, it pushes `main`, tags the next fork version, and calls the release. When `main` has fork commits with no release, it does the same with no merge. |
 | Release | `.github/workflows/fork-release.yml` | Builds the x64 and arm64 AppImages as `release.yml` does, checks them, and publishes them with `latest-linux.yml`, `latest-linux-arm64.yml` and `SHA256SUMS.txt` as the latest GitHub Release of this fork. The hosting files (`resources/hosting/*`) are in each AppImage. |
 | Steps | `scripts/fork/fork-release.sh` | Finds the upstream base, the next fork version and the fork tests, and checks the update feed. |
 | Update feed | `electron-builder.yml`, `scripts/install-server.sh`, `scripts/hosting/openbot-hosted-update`, `src/main/host-release-service.ts` | Name `phuzzled/openbot`. The install, the update timer, `sudo openbot update`, and the update check in Server Settings read the releases of this fork. |
 
-The sync follows upstream **release tags** (`releases/latest` of `nightly-labs/openbot`), never
-upstream `main`. It merges, it does not rebase, so `main` is never force-pushed. Upstream tags go to
-`refs/upstream-tags/*` in the job, never to the tags of this fork.
+The sync follows upstream **`main`** of `nightly-labs/openbot`, so the fork also ships upstream code
+that upstream has not released yet. That code has had upstream CI but no upstream release, and an
+unreleased upstream migration can still change before upstream releases it. It merges, it does not
+rebase, so `main` is never force-pushed. Upstream `main` goes to `refs/upstream/main` and upstream
+tags to `refs/upstream-tags/*` in the job, never to the branches or tags of this fork.
 
 A merge conflict, a typecheck error or a failed test ships nothing: no push to `main`, no tag, no
-release. The job opens an issue "Fork sync blocked: upstream vX.Y.Z" (or adds a comment to the open
-one). A merge that tested red is on the branch `fork-sync/vX.Y.Z`.
+release. The job opens the issue "Fork sync blocked: upstream main" (or adds a comment to it while
+it is open). A merge that tested red is on the branch `fork-sync/upstream-<sha>`, where `<sha>` is
+the first 12 characters of the upstream commit.
 
 ### Versions
 
 The installer, the update timer and the release manifest accept `X.Y.Z` only, and each compares
-versions as numbers (`sort -V` in the scripts, `newerRelease` in `host-release-service.ts`). A fork
-release on upstream `X.Y.Z` is:
+versions as numbers (`sort -V` in the scripts, `newerRelease` in `host-release-service.ts`). The
+upstream base is the newest upstream release that `main` contains, also when `main` has upstream
+commits after it. A fork release on upstream `X.Y.Z` is:
 
     X.Y.P   with   P = (Z + 1) * 1000 + N,   N = 1, 2, ... 999
 
@@ -169,20 +173,21 @@ installable with step 5.
 
   ```sh
   git fetch origin && git switch main && git pull
-  git fetch --no-tags https://github.com/nightly-labs/openbot.git '+refs/tags/vX.Y.Z:refs/upstream-tags/vX.Y.Z'
-  git merge --no-ff -m "Merge upstream OpenBot vX.Y.Z" 'refs/upstream-tags/vX.Y.Z^{commit}'
+  git fetch --no-tags https://github.com/nightly-labs/openbot.git '+refs/heads/main:refs/upstream/main'
+  git merge --no-ff -m "Merge upstream OpenBot main" refs/upstream/main
   # Resolve. Keep the FORK.md rules: no upstream migration number, fork tables in fork-schema.ts,
   # the update feed on phuzzled/openbot (scripts/fork/fork-release.sh check-feed).
   git push origin main
   ```
 
-  Then run the sync (`gh workflow run fork-sync.yml --repo phuzzled/openbot`). It finds the tag in
-  `main`, runs the tests, tags and releases.
+  Then run the sync (`gh workflow run fork-sync.yml --repo phuzzled/openbot`). It finds upstream
+  `main` in `main`, runs the tests, tags and releases. Upstream may have moved on in the meantime; the
+  sync then merges the rest.
 - **Typecheck or test failure.** The issue has the end of each failed log, and the merge is on
-  `fork-sync/vX.Y.Z`. Fix it on that branch, merge the branch into `main`, push, and run the sync.
+  `fork-sync/upstream-<sha>`. Fix it on that branch, merge the branch into `main`, push, and run the sync.
 - **Update feed check.** Upstream added a release URL to a server feed file. Change it to
   `phuzzled/openbot`, as `FORK.md` lists.
-- Close the issue, and delete `fork-sync/vX.Y.Z`.
+- Close the issue, and delete `fork-sync/upstream-<sha>`.
 
 To release fork commits before the next scheduled run: `gh workflow run fork-sync.yml --repo
 phuzzled/openbot`. To build an existing tag again: `gh workflow run fork-release.yml --repo

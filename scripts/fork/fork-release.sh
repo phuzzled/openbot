@@ -9,6 +9,8 @@
 #   fork-release.sh fork-tag [ref]    The fork release tag on ref, or nothing.
 #   fork-release.sh version [ref]     The fork version for ref: its tag, or the next free one.
 #   fork-release.sh unit-tests [ref]  The test files that fork commits touched and that ref has.
+#                                     Commits of upstream main (after fetch-upstream) are not fork
+#                                     commits.
 #   fork-release.sh check-feed        Fails when an update feed of the server names upstream.
 #
 # Version scheme. The installer, the hosted updater and the release manifest accept X.Y.Z only. A
@@ -101,12 +103,14 @@ version() {
   echo "$next"
 }
 
-# Files that fork commits (not in the upstream release that ref is on) added or changed, and that ref
-# still has.
+# Files that fork commits (not in the upstream release that ref is on, nor in upstream main) added or
+# changed, and that ref still has.
 unit_tests() {
-  local ref=${1:-HEAD} base_tag file
+  local ref=${1:-HEAD} base_tag file not
   base_tag=$(base "$ref")
-  git log --no-merges --format= --name-only --diff-filter=AMR "$ref" --not "refs/upstream-tags/$base_tag" |
+  not=("refs/upstream-tags/$base_tag")
+  if git rev-parse --verify --quiet refs/upstream/main >/dev/null; then not+=(refs/upstream/main); fi
+  git log --no-merges --format= --name-only --diff-filter=AMR "$ref" --not "${not[@]}" |
     sort -u | grep -E '\.test\.tsx?$' | while read -r file; do
     if git cat-file -e "$ref:$file" 2>/dev/null; then echo "$file"; fi
   done

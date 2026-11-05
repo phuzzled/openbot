@@ -1,17 +1,17 @@
 # Fork workflow. See FORK-DEPLOY.md.
 name: Fork sync
 
-# Keeps this fork on the newest upstream OpenBot release, with the fork commits on top, and releases
-# it for the Linux servers that install from this fork. See FORK-DEPLOY.md.
+# Keeps this fork on upstream OpenBot main, with the fork commits on top, and releases it for the
+# Linux servers that install from this fork. See FORK-DEPLOY.md.
 #
-# 1. When upstream has a release that main does not contain, merge its tag into main in a branch.
-#    The fork tracks release tags, never upstream main, so it ships only released upstream code.
+# 1. When upstream main has commits that main does not contain, merge upstream main into main in a
+#    branch. The fork tracks upstream main, so it also ships upstream code that has no release yet.
 # 2. Run the fork tests on the result.
 # 3. When they pass, push main, tag the next fork version and call fork-release.yml.
 #    When main has fork commits with no release, step 3 runs without a merge.
 #
-# A merge conflict or a failed test ships nothing. It opens (or adds a comment to) an issue named
-# "Fork sync blocked: upstream <tag>", and pushes a failed merge to fork-sync/<tag> for inspection.
+# A merge conflict or a failed test ships nothing. It opens (or adds a comment to) the issue
+# "Fork sync blocked: upstream main", and pushes a failed merge to fork-sync/upstream-<sha>.
 
 on:
   schedule:
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   sync:
-    name: Merge the upstream release and test
+    name: Merge upstream main and test
     if: github.repository != 'nightly-labs/openbot'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -54,11 +54,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           scripts/fork/fork-release.sh fetch-upstream
-          latest=$(scripts/fork/fork-release.sh upstream-latest)
+          upstream=$(git rev-parse refs/upstream/main)
+          latest="upstream-${upstream:0:12}"
           base=$(scripts/fork/fork-release.sh base HEAD)
-          echo "Upstream latest release: $latest. Fork base: $base."
+          echo "Upstream main: $upstream. Fork base release: $base."
           action=none
-          if ! git merge-base --is-ancestor "refs/upstream-tags/$latest^{commit}" HEAD; then
+          if ! git merge-base --is-ancestor "$upstream" HEAD; then
             action=merge
           elif [ -z "$(scripts/fork/fork-release.sh fork-tag HEAD)" ]; then
             action=release
@@ -67,23 +68,25 @@ jobs:
           {
             echo "action=$action"
             echo "latest=$latest"
+            echo "upstream=$upstream"
             echo "base=$base"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Merge the upstream release
+      - name: Merge upstream main
         id: merge
         if: steps.plan.outputs.action == 'merge'
         shell: bash
         env:
           LATEST: ${{ steps.plan.outputs.latest }}
+          UPSTREAM: ${{ steps.plan.outputs.upstream }}
         run: |
           set -euo pipefail
           git switch --create "fork-sync/$LATEST"
-          if git merge --no-ff --no-edit -m "Merge upstream OpenBot $LATEST" "refs/upstream-tags/$LATEST^{commit}"; then
+          if git merge --no-ff --no-edit -m "Merge upstream OpenBot main ${UPSTREAM:0:12}" "$UPSTREAM"; then
             exit 0
           fi
           {
-            echo "The merge of upstream $LATEST into main has conflicts in these files:"
+            echo "The merge of upstream main (${UPSTREAM:0:12}) into main has conflicts in these files:"
             echo
             # shellcheck disable=SC2016 # The backticks are Markdown.
             git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/'
@@ -185,7 +188,8 @@ jobs:
               printf '\nThe merge is on the branch `fork-sync/%s`.\n' "$LATEST" >> "$RUNNER_TEMP/failure.md"
             fi
           fi
-          title="Fork sync blocked: upstream $LATEST"
+          # One issue for all blocks: upstream main moves, and each run adds a comment to it.
+          title="Fork sync blocked: upstream main"
           {
             cat "$RUNNER_TEMP/failure.md"
             echo
