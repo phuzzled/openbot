@@ -61,11 +61,11 @@ describe("fork schema", () => {
     const database = await openDatabase();
     const db = database.connection;
     expect(timerTable(db)).toEqual(TIMER_OBJECTS);
-    // The upstream sequence is unchanged: 53 is the last version of upstream v0.60.0.
-    expect(maxVersion(db)).toEqual({ version: 53 });
+    // The upstream sequence is unchanged: 55 is the last upstream version.
+    expect(maxVersion(db)).toEqual({ version: 55 });
   });
 
-  it.each([34, 52])(
+  it.each([34, 54])(
     "gives a database upgraded from released schema %i the timer table, and keeps its waits",
     (version) => {
       const db = databaseAt(version);
@@ -78,7 +78,7 @@ describe("fork schema", () => {
       applyForkSchema(db);
       expect(timerTable(db)).toEqual(TIMER_OBJECTS);
       expect(db.prepare("SELECT * FROM agent_waits").all()).toEqual(before);
-      expect(maxVersion(db)).toEqual({ version: 53 });
+      expect(maxVersion(db)).toEqual({ version: 55 });
       // A wait from before the fork has no timer row: no wake time and no time wake.
       const store = new AgentWaitStore({ database: { connection: db } });
       expect(store.get("chief", "wait-1")).toMatchObject({ wakeAt: null, timeWakes: 0 });
@@ -194,15 +194,15 @@ describe("fork schema", () => {
     it("gives a new database the stall tables, and no fork migration version", async () => {
       const database = await openDatabase();
       expect(stallObjects(database.connection)).toEqual(STALL_OBJECTS);
-      expect(maxVersion(database.connection)).toEqual({ version: 53 });
+      expect(maxVersion(database.connection)).toEqual({ version: 55 });
     });
 
-    it.each([34, 52])("gives a database upgraded from released schema %i the stall tables", (version) => {
+    it.each([34, 54])("gives a database upgraded from released schema %i the stall tables", (version) => {
       const db = databaseAt(version);
       migrateOpenBotDatabase(db);
       applyForkSchema(db);
       expect(stallObjects(db)).toEqual(STALL_OBJECTS);
-      expect(maxVersion(db)).toEqual({ version: 53 });
+      expect(maxVersion(db)).toEqual({ version: 55 });
     });
 
     it("is idempotent, and keeps one check per lane", async () => {

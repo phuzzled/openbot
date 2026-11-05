@@ -163,6 +163,8 @@ async function startRuntime() {
       excludedAgents: () => new Set(),
       isRunning: () => false,
       usageLimited: () => false,
+      routineThread: () => null,
+      routineDeleted: () => Effect.void,
     },
   });
   const scope = Scope.makeUnsafe();

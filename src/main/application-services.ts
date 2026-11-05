@@ -71,6 +71,7 @@ import { readdir, rm } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import type { Readable } from "node:stream";
 import { selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import type {
   AgentStatus,
@@ -107,7 +108,6 @@ import {
   Notification,
   nativeImage,
   powerMonitor,
-  safeStorage,
   screen,
   shell,
   systemPreferences,
@@ -231,8 +231,14 @@ import { prepareToolRuntimeForTest } from "./ipc/mcp-server-handlers";
 import { LanguageService } from "./language-service";
 import { LinkAccountService } from "./link-account-service";
 import { LinkAccountStore } from "./link-account-store";
+import { ozonePlatformArguments } from "./linux-wayland-output";
 import { localRoutineFeedDocument } from "./local-routine-calendar";
-import { type LocalServerChildEnvironment, startLocalServerChild } from "./local-server-child";
+import {
+  formatLocalServerMembersRequest,
+  type LocalServerChildEnvironment,
+  LocalServerMembers,
+  startLocalServerChild,
+} from "./local-server-child";
 import { LOCAL_SERVERS_FILE } from "./local-servers/local-server-registry";
 import { LocalServers } from "./local-servers/local-servers";
 import { createLoginItem } from "./login-item";
@@ -308,6 +314,12 @@ import { StatementTimings } from "./resource-summary";
 import { RoutineFeedServer } from "./routine-feed-server";
 import { clearRoutineHold, ROUTINE_HOLD_FILE, takeRoutineHold, writeRoutineHold } from "./routine-hold-file";
 import { ScreenCapturer } from "./screen-capture";
+import {
+  createSecretStorage,
+  SECRET_STORAGE_KEY_FILE,
+  type SecretStorage,
+  type SecretStorageCipher,
+} from "./secret-storage-cipher";
 import { SERVER_AUDIT_FILE, ServerAuditStore, serverAuditNames } from "./server-audit-store";
 import { AGENT_PROCESS_VARIABLE, agentProcessEnvironment, ServerMemory } from "./server-memory";
 import { ServerMode, type ServerModeEnvironment } from "./server-mode";
@@ -331,12 +343,14 @@ import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
 import type { TeardownRegistry } from "./teardown-registry";
 import { THEME_PALETTE_DIRECTORY } from "./theme-palette-files";
 import { TraceFile } from "./trace-file";
-import { readUpdatePreference, writeUpdatePreference } from "./update-preference-store";
+import { readUpdatePreference, UPDATE_PREFERENCE_FILE, writeUpdatePreference } from "./update-preference-store";
 import { checkRestartReadiness, type RestartReadiness } from "./update-readiness";
 import {
   createDisabledUpdateAdapter,
+  electronUpdaterCacheDirectory,
   isNixStoreInstall,
   isValidSemver,
+  loadElectronUpdater,
   supportsInstalledUpdates,
   type UpdateAdapter,
   UpdateService,
@@ -374,7 +388,6 @@ const LANGUAGE_PREFERENCE_FILE = "openbot-language-preference-v1.json";
 const LOGO_COLOR_PREFERENCE_FILE = "openbot-logo-color-preference-v1.json";
 const APPEARANCE_PREFERENCE_FILE = "openbot-appearance-preference-v1.json";
 const INTERFACE_SIZE_PREFERENCE_FILE = "openbot-interface-size-preference-v1.json";
-const UPDATE_PREFERENCE_FILE = "openbot-update-preference-v1.json";
 const NOTIFICATION_PREFERENCE_FILE = "openbot-notification-preference-v1.json";
 const PUSH_NOTIFICATION_FILE = "openbot-push-notifications-v1.json";
 const BUSY_MESSAGE_MODE_PREFERENCE_FILE = "openbot-busy-message-mode-v1.json";
@@ -536,6 +549,8 @@ export interface ApplicationServiceContext {
   hostingDeveloperKey: string | null;
   /** Set only in a local server that the desktop app started as its child. See `local-server-child.ts`. */
   localServerChild: LocalServerChildEnvironment | null;
+  /** The control pipe of a local server: the commands of the desktop app. */
+  localServerControl: Readable | null;
   macHapticFeedback: MacHapticFeedback;
   teardown: TeardownRegistry;
   forwardCentralAuth: (state: CentralAuthState) => void;
@@ -681,37 +696,33 @@ export interface ApplicationServices {
   centralAuthInitialization: Effect.Effect<CentralAuthState, RemoteWorkflowError>;
 }
 
-/** How the driver's own state reads as the capability the Team API projects. */
-/** The Electron secret storage cipher that every encrypted file in userData uses. */
-function safeStorageCipher(
-  unavailableKey: "error.app.secretStorageUnavailable" | "error.app.macSecureStorageUnavailable",
-) {
-  return {
-    canPersist: () => safeStorage.isEncryptionAvailable(),
-    encrypt: (value: string) => {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error(sourceText(unavailableKey));
-      return safeStorage.encryptString(value);
-    },
-    decrypt: (value: Buffer) => safeStorage.decryptString(value),
-  };
+let userDataSecretStorage: SecretStorage | null = null;
+
+/** The secret storage of userData. Made at first use, when userData has its final path. */
+function secretStorage(): SecretStorage {
+  userDataSecretStorage ??= createSecretStorage({
+    keyPath: join(app.getPath("userData"), SECRET_STORAGE_KEY_FILE),
+  });
+  return userDataSecretStorage;
 }
 
+/** The cipher that every encrypted file in userData uses: `safeStorage`, or the Linux key file. */
+function safeStorageCipher(
+  unavailableKey: "error.app.secretStorageUnavailable" | "error.app.macSecureStorageUnavailable",
+): SecretStorageCipher {
+  return secretStorage().cipher(() => sourceText(unavailableKey));
+}
+
+/** How the driver's own state reads as the capability the Team API projects. */
 function computerUseCapability(state: ComputerUseState): CapabilityState {
   if (state.status === "ready") return "ready";
   if (state.status === "permissions-required") return "setup-required";
   return "unavailable";
 }
 
-/** The base cache path of electron-updater 6.8.9 (`getAppCacheDir`), which differs from Electron's. */
-function electronUpdaterCacheRoot(): string {
-  if (process.platform === "win32") return process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
-  if (process.platform === "darwin") return join(homedir(), "Library", "Caches");
-  return process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
-}
-
 interface MessagingServicesContext {
   teardown: TeardownRegistry;
-  secretCipher: ReturnType<typeof safeStorageCipher>;
+  secretCipher: SecretStorageCipher;
   centralAuth: CentralAuthManager;
   service: AgentService;
   sidebarLayout: SidebarLayoutStore;
@@ -934,6 +945,7 @@ export async function createApplicationServices({
   serverMode: serverModeEnvironment,
   hostingDeveloperKey,
   localServerChild,
+  localServerControl,
   macHapticFeedback,
   teardown,
   forwardCentralAuth,
@@ -1013,6 +1025,7 @@ export async function createApplicationServices({
     mobileConnectApiUrl: readMobileConnectApiUrl(process.env.OPENBOT_MOBILE_AUTH_API_URL, centralAuthApiUrl),
     storagePath: join(app.getPath("userData"), CENTRAL_AUTH_FILE),
     ...safeStorageCipher("error.app.macSecureStorageUnavailable"),
+    keyringChanged: () => secretStorage().madeKeyFile(),
     // The system browser, where the user is signed in to the company. The language loads below.
     companySignInBrowser: { open: (url) => shell.openExternal(url), language: () => language },
   });
@@ -1865,6 +1878,7 @@ export async function createApplicationServices({
     agentApiKeys,
     localSkillTools: () => localSkillTools(skills),
     routineFlowTools: () => routineFlowRuntime,
+    workflowTools: () => workflowRuntime,
     // `events` is built later, after the account service and the relay.
     webhookRoutines: () => agentWebhookRoutineWriter(events),
     approvalAutomation,
@@ -1905,11 +1919,8 @@ export async function createApplicationServices({
   });
   await runCauseEffect(modelVisibility.load());
   /** The answer an agent gave in one turn, for routine flows, routine results and local scripts. */
-  const turnAnswer = (agentId: string, turnId: string): string | null => {
-    const threadId = store.list().find((agent) => agent.id === agentId)?.threadId;
-    if (!threadId) return null;
-    return latestTurnAnswer(store.database.readTurnAssistantMessages(agentId, threadId, turnId), turnId)?.text ?? null;
-  };
+  const turnAnswer = (agentId: string, turnId: string): string | null =>
+    latestTurnAnswer(store.database.readTurnAssistantMessages(agentId, turnId), turnId)?.text ?? null;
   // Listens only while an agent allows local scripts; see `AutomationServer`.
   const automation = new AutomationServer({
     root: store.automationRoot,
@@ -1998,7 +2009,7 @@ export async function createApplicationServices({
       telegramSend: (connectionId, send) => service.messaging.telegramSend(connectionId, send),
       slackSend: (connectionId, send) => service.messaging.slackSend(connectionId, send),
       // An agent event, so this window, joined clients and the web app hear it the same way.
-      changed: (workflowId) => service.notifyWorkflowsChanged(workflowId),
+      changed: (workflowId, agentId) => service.notifyWorkflowsChanged(workflowId, agentId),
       rearm: () => service.armRoutines(),
       timezone: () => serverTimezone.effective(),
       runEnded: (end) => service.notifyWorkflowRunEnded(end),
@@ -2529,6 +2540,8 @@ export async function createApplicationServices({
   // Development only: a shorter or longer time without input before a phone notifies, to test it.
   const awaySeconds = app.isPackaged ? Number.NaN : Number(process.env.OPENBOT_DEV_AWAY_SECONDS);
   const awayAfterMs = Number.isInteger(awaySeconds) && awaySeconds > 0 ? awaySeconds * 1_000 : DESKTOP_USE_MS;
+  // A server on this computer has no account session: the desktop app reads its directory for it.
+  const localServerMembers = new LocalServerMembers(() => process.stdout.write(formatLocalServerMembersRequest()));
   const host = new HostService({
     appVersion: app.getVersion(),
     store: teamStore,
@@ -2743,7 +2756,9 @@ export async function createApplicationServices({
     createRemoteInvite: (hostId, input) => centralAuth.createRemoteInvite(hostId, input).pipe(toRemoteWorkflowError),
     listRemoteInvites: (hostId) => centralAuth.listRemoteInvites(hostId).pipe(toRemoteWorkflowError),
     revokeRemoteInvite: (inviteId) => centralAuth.revokeRemoteInvite(inviteId).pipe(toRemoteWorkflowError),
-    listRemoteMembers: (hostId) => centralAuth.listRemoteMembers(hostId).pipe(toRemoteWorkflowError),
+    listRemoteMembers: localServerChild
+      ? () => localServerMembers.list()
+      : (hostId) => centralAuth.listRemoteMembers(hostId).pipe(toRemoteWorkflowError),
     updateRemoteMember: (hostId, membershipId, role, reactivate) =>
       centralAuth.updateRemoteMember(hostId, membershipId, role, reactivate).pipe(toRemoteWorkflowError),
     removeRemoteMember: (hostId, membershipId) =>
@@ -2751,6 +2766,7 @@ export async function createApplicationServices({
     updateRemoteHostLogo: (hostId, image, version) =>
       centralAuth.updateRemoteHostLogo(hostId, image, version).pipe(toRemoteWorkflowError),
     localDevelopmentHost: developmentRemoteRole === "host",
+    passwordOwner: localServerChild !== null,
     logDirectory: join(app.getPath("userData"), "logs", "remote"),
     removeLegacyRemoteDesktopCredential: () =>
       Effect.tryPromise({
@@ -2783,7 +2799,7 @@ export async function createApplicationServices({
     remoteDesktopStateDirectory: join(app.getPath("userData"), "remote-desktop-runtime"),
     getRemoteDesktopRuntimeCredentials: () =>
       Effect.suspend(() => {
-        if (!safeStorage.isEncryptionAvailable())
+        if (!secretCipher.canPersist())
           return Effect.fail(
             new RemoteWorkflowError({ cause: new Error(sourceText("error.app.secretStorageUnavailable")) }),
           );
@@ -2801,6 +2817,12 @@ export async function createApplicationServices({
         height: display.size.height,
         primary: display.id === primaryId,
       }));
+    },
+    // Electron bounds are in DIP; Sunshine reports a Windows display's origin in physical pixels.
+    getRemoteDesktopDisplayScreenOrigin: (displayId) => {
+      if (process.platform !== "win32") return undefined;
+      const display = screen.getAllDisplays().find((candidate) => String(candidate.id) === displayId);
+      return display ? screen.dipToScreenPoint({ x: display.bounds.x, y: display.bounds.y }) : undefined;
     },
     // A member's paste in the remote desktop replaces this computer's clipboard, as a copy they make
     // on it does.
@@ -3050,7 +3072,10 @@ export async function createApplicationServices({
           runtimeRoot: providerRuntimesRoot,
           cipher: safeStorageCipher("error.app.macSecureStorageUnavailable"),
           remoteServers,
-          command: { executable: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()] },
+          command: {
+            executable: process.execPath,
+            args: [...(app.isPackaged ? [] : [app.getAppPath()]), ...ozonePlatformArguments()],
+          },
           trash: (path) => shell.trashItem(path),
           account: {
             accountId: () => {
@@ -3059,6 +3084,7 @@ export async function createApplicationServices({
             },
             register: (input) => centralAuth.registerRemoteHost(input).pipe(Effect.asVoid, toRemoteWorkflowError),
             credential: (hostId) => centralAuth.hostSiteCredential(hostId)?.machineToken ?? null,
+            listMembers: (hostId) => centralAuth.listRemoteMembers(hostId).pipe(toRemoteWorkflowError),
             // A host that the account service no longer has, or that another account owns, is not this
             // account's to remove: either way it is gone from this account's list. Any other failure,
             // such as an expired session, keeps the id for the next sign-in.
@@ -3083,6 +3109,8 @@ export async function createApplicationServices({
     centralAuth.on("changed", () => {
       Effect.runFork(localServers.accountChanged());
     });
+    // A member change on the desktop app reaches the server's own copy of its members.
+    remoteServers.setThisComputerMembersListener((serverId) => localServers.sendMembers(serverId));
     // Before `remoteServers.initialize()`: the account's directory sync keeps only the entries of the
     // servers on this computer that it knows.
     await Effect.runPromise(localServers.load());
@@ -3117,8 +3145,9 @@ export async function createApplicationServices({
         teamStore,
         host,
         writeReady: (line) => process.stdout.write(line),
+        members: localServerMembers,
         readCommands: (onLine) => {
-          createInterface({ input: process.stdin }).on("line", onLine);
+          if (localServerControl) createInterface({ input: localServerControl }).on("line", onLine);
         },
         // The desktop app registered this server for its account. Its machine token gets the Signal
         // tickets and sends the notifications; this process has no account of its own.
@@ -3270,19 +3299,12 @@ export async function createApplicationServices({
       ...(containerInstaller ? { paths: CONTAINER_UPDATE_PATHS } : {}),
     });
   } else if (updatesEnabled) {
-    try {
-      const updaterModule = await import("electron-updater");
-      const realAdapter = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater ?? updaterModule.default;
-      if (realAdapter) {
-        updateAdapter = realAdapter;
-        updaterCacheDirectory = join(electronUpdaterCacheRoot(), "openbot-updater");
-      } else {
-        updaterEnabled = false;
-        logger.warn("OpenBot updates are disabled: electron-updater did not export autoUpdater");
-      }
-    } catch {
+    const realAdapter = await loadElectronUpdater();
+    if (realAdapter) {
+      updateAdapter = realAdapter;
+      updaterCacheDirectory = electronUpdaterCacheDirectory();
+    } else {
       updaterEnabled = false;
-      logger.warn("OpenBot updates are disabled: electron-updater failed to load");
     }
   }
   const updater = new UpdateService(updateAdapter, {
@@ -3409,7 +3431,8 @@ export async function createApplicationServices({
     relaunch: () => {
       // A development build only quits: its supervisor stops the stack, and a relaunched Electron
       // would run outside it with no renderer server.
-      if (app.isPackaged) app.relaunch();
+      // The arguments of `process.argv`: after an XWayland start, they do not keep `--ozone-platform=x11`.
+      if (app.isPackaged) app.relaunch({ args: process.argv.slice(1) });
       app.quit();
     },
     log: (message) => logger.info(message),

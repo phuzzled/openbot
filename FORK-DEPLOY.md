@@ -119,10 +119,11 @@ Run these on Animus One. The default service user is `openbot`; the installed on
    sudo sqlite3 -readonly "$db" 'SELECT MAX(version) FROM schema_migrations'
    ```
 
-   Upstream v0.60.0 gives 53. The fork is on the upstream release v0.60.0 and adds no upstream
-   migration (its tables are outside the migration sequence, see `FORK.md`), so after the switch it
-   still gives 53. A number above 53 means that the database is newer than the fork: stop, and do not
-   install.
+   Upstream v0.60.0 gives 53, and upstream v0.61.0 gives 55. The fork is on the upstream release
+   v0.61.0 and adds no upstream migration (its tables are outside the migration sequence, see
+   `FORK.md`), so after the switch it gives 55. A database of v0.60.0 gets the upstream migrations 54
+   and 55 at the first start of the fork. A number above 55 means that the database is newer than the
+   fork: stop, and do not install.
 
 5. Install the fork. The install keeps the user, the account server and the display size of the
    installed server, and starts OpenBot and the timer:
@@ -134,7 +135,7 @@ Run these on Animus One. The default service user is `openbot`; the installed on
 6. Verify:
 
    ```sh
-   openbot status                                   # OpenBot 0.60.1001 (or newer), signed in
+   openbot status                                   # OpenBot 0.61.1001 (or newer), signed in
    grep '^RELEASES=' /opt/OpenBot/hosted/openbot-hosted-update   # phuzzled/openbot
    systemctl is-active openbot.service openbot-update.timer
    openbot logs                                     # no start errors
@@ -190,7 +191,7 @@ phuzzled/openbot -f tag=v0.60.1001`.
 ## Client and server
 
 The Mac app and the server agree on a Team protocol range (`LOCAL_TEAM_PROTOCOL`, protocols 1 to 9
-in v0.60.0), not on the app version. A connection fails ("incompatible") only when the ranges do
+in v0.61.0), not on the app version. A connection fails ("incompatible") only when the ranges do
 not overlap. The fork does not change the Team protocol. The fork adds two optional fields
 (`wakeAt`, `timeWakes`) to an agent wait; an upstream app ignores them.
 

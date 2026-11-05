@@ -601,7 +601,15 @@ function AlternativeItem(props: { row: ProviderRow }) {
 /* ---------------------------------------------- Accounts */
 
 /** The providers whose CLI signs its own sign-in out (`signOut` in `src/backend/provider-drivers.ts`). */
-const SIGN_OUT_PROVIDERS: ReadonlySet<AgentProviderId> = new Set(["claude", "codex", "grok", "muse", "cursor"]);
+const SIGN_OUT_PROVIDERS: ReadonlySet<AgentProviderId> = new Set([
+  "claude",
+  "codex",
+  "grok",
+  "muse",
+  "cursor",
+  "devin",
+  "copilot",
+]);
 
 /** The confirmation text of a Disconnect of the provider's own sign-in. */
 function disconnectDescription(

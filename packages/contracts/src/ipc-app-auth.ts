@@ -1,5 +1,5 @@
 import type { ManagedProviderId, ManagedToolRuntimeId } from "./agent-providers";
-import type { AgentModelId } from "./ipc-agent-identity";
+import type { AgentModelId, AvatarColor } from "./ipc-agent-identity";
 import type { AgentProviderId } from "./ipc-agent-status";
 import { integerInRange, isFiniteNumber, isIdentifier } from "./ipc-bounded-values";
 import { decodeRecord, nullableNumber, requiredBoolean, requiredNumber, requiredString } from "./ipc-decoding";
@@ -17,6 +17,11 @@ export interface AppInfo {
   analyticsCaptureUrl?: string;
   /** The random analytics ID of this install, for events that do not go with the account. */
   analyticsInstallId?: string;
+  /**
+   * True when Chromium draws the windows on the CPU: hardware acceleration is off, or the GPU is
+   * blocked or missing, as on a server, a remote desktop or a computer whose GPU failed.
+   */
+  softwareRendering?: boolean;
 }
 
 /** The phase list is the source of truth: `UpdatePhase` is derived from it. */
@@ -195,6 +200,12 @@ export interface SaveSetupInput {
   preferredModel: AgentModelId | null;
 }
 
+/**
+ * The default provider of a joined server's host (`provider-default-v1`). A provider that this build
+ * does not know reads as none.
+ */
+export type HostDefaultProvider = Pick<AppSetupState, "preferredProvider" | "preferredModel">;
+
 export interface AnalyticsPreference {
   enabled: boolean;
 }
@@ -215,6 +226,11 @@ export interface CentralAuthUser {
    * never answered, or the account service is older.
    */
   analyticsEnabled?: boolean | null;
+  /**
+   * The tint of the user's own chat bubbles, which members of each server of the user see. Null or
+   * missing: no chat color, or the account service is older.
+   */
+  chatColor?: AvatarColor | null;
 }
 
 export interface CentralAuthIssue {
@@ -225,9 +241,15 @@ export interface CentralAuthIssue {
   reference?: string;
 }
 
+export type CentralAuthSignedOutReason = "keyring_changed";
+
 export type CentralAuthState =
   | { status: "loading" }
-  | { status: "signed_out" }
+  /**
+   * `keyring_changed`: the Linux keyring did not open the saved sign-in, so OpenBot now keeps its
+   * secrets in its own key file and the user signs in one more time.
+   */
+  | { status: "signed_out"; reason?: CentralAuthSignedOutReason }
   | { status: "signing_in" }
   | {
       status: "code_sent";

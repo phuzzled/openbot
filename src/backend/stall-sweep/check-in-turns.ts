@@ -54,7 +54,9 @@ export function waitRequestText(delivery: {
  * anything that runs later or elsewhere: `create_routine` and `update_routine` are not here, because a
  * routine runs later as a normal turn with no restriction. `acknowledge_request` is not here either:
  * when nobody answers in 10 s, OpenBot presses its start button, which is not the user's answer.
- * `close_wait` closes only the agent's own wait (`checkInAllowsOpenBotTool`).
+ * `close_wait` closes only the agent's own wait (`checkInAllowsOpenBotTool`). Of the tools of upstream
+ * v0.61.0, only the workflow reads are here: `save_api_key`, `create_channel`, `update_channel`,
+ * `channel_cancel`, `edit_workflow`, `delete_workflow` and `run_workflow` write, delete or start work.
  */
 export const CHECK_IN_OPENBOT_TOOLS: ReadonlySet<string> = new Set([
   // The agent's own waits.
@@ -78,6 +80,9 @@ export const CHECK_IN_OPENBOT_TOOLS: ReadonlySet<string> = new Set([
   "list_channels",
   "channel_history",
   "channel_list_routines",
+  "list_workflows",
+  "read_workflow",
+  "read_workflow_runs",
   "list_tables",
   "query_data",
   "list_sites",

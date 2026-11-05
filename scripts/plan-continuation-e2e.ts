@@ -992,10 +992,12 @@ try {
     );
     assert.deepEqual(runEvents.at(-1), "succeeded", "The run ends with one result.");
     assert.equal(runEvents.filter((status) => status === "succeeded").length, 1, "One run result shows.");
-    // In v0.60.0 a routine run shows in the agent's own chat.
-    assert.equal(continuationLines(agent.id).length, 1, "One continuation line shows.");
+    // A routine with its own side thread shows its runs there.
+    const routineThread = current.service.listTasks(agent.id).tasks[0]?.threadId;
+    assert.ok(routineThread, "The routine has its side thread.");
+    assert.equal(continuationLines(agent.id, routineThread).length, 1, "One continuation line shows.");
     assert.ok(
-      chatMessages(agent.id).some((message) => message.text === "The report is written."),
+      chatMessages(agent.id, routineThread).some((message) => message.text === "The report is written."),
       "The last answer shows.",
     );
     assert.equal(errorsFor(agent.id, since).length, 0, "No error shows.");
@@ -1034,7 +1036,8 @@ try {
       return run && (run.status === "succeeded" || ended(run.status)) ? run : null;
     });
     assert.equal(turnsSince(mark).length, 1, "No continuation turn runs after a question.");
-    assert.equal(continuationLines(agent.id).length, 0);
+    const routineThread = current.service.listTasks(agent.id).tasks[0]?.threadId;
+    assert.equal(continuationLines(agent.id, routineThread).length, 0);
     return { turns: 1 };
   });
 

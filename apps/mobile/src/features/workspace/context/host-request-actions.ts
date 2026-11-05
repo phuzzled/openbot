@@ -1,5 +1,6 @@
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
 import {
+  type AvatarColor,
   assertStorageUsageScope,
   CHANNEL_CHATS_CAPABILITY,
   canAdministerServer,
@@ -39,6 +40,12 @@ import {
   AGENT_BACKUP_MODELS_CAPABILITY,
   AGENT_BACKUP_MODELS_ROUTES,
 } from "@openbot/contracts/team-protocol/agent-backup-models-v1";
+import {
+  AGENT_COLORS_CAPABILITY,
+  AGENT_COLORS_ROUTES,
+  type AgentColorsSnapshot,
+  decodeAgentColorsSnapshot,
+} from "@openbot/contracts/team-protocol/agent-colors-v1";
 import {
   AGENT_FAST_MODE_CAPABILITY,
   AGENT_FAST_MODE_ROUTES,
@@ -111,6 +118,7 @@ import { HOST_UPDATE_CAPABILITY } from "@openbot/contracts/team-protocol/host-up
 import { HOSTED_SITES_CAPABILITY } from "@openbot/contracts/team-protocol/hosted-sites-v1";
 import { INSTANCE_TRANSFER_CAPABILITY } from "@openbot/contracts/team-protocol/instance-transfer-v1";
 import { MCP_SIGN_IN_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-sign-in-v1";
+import { MESSAGE_DELETE_CAPABILITY, MESSAGE_DELETE_ROUTES } from "@openbot/contracts/team-protocol/message-delete-v1";
 import { ONEPASSWORD_CONNECTOR_CAPABILITY } from "@openbot/contracts/team-protocol/onepassword-connector-v1";
 import { PROVIDER_ACCOUNTS_CAPABILITY } from "@openbot/contracts/team-protocol/provider-accounts-v1";
 import { PROVIDERS_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/providers-v1";
@@ -434,6 +442,7 @@ type HostRequestActions = Pick<
   | "editQueue"
   | "changeQueue"
   | "setMessageReaction"
+  | "deleteMessage"
   | "downloadAttachment"
 >;
 
@@ -465,6 +474,32 @@ export async function writeHostAgentHidden(
   input: SetAgentHiddenInput,
 ): Promise<HiddenAgent[]> {
   return (await runTeamRequest(setAgentHidden(request, input))).agents;
+}
+
+/** A host that serves `agent-colors-v1` keeps an exact colour beside the hue of each agent. */
+export function hostKeepsAgentColors(capabilities: readonly string[] | undefined): boolean {
+  return capabilities?.includes(AGENT_COLORS_CAPABILITY) ?? false;
+}
+
+/** The agents with a colour on a host that serves `agent-colors-v1`, or null for an older host. */
+export async function readHostAgentColors(
+  request: TeamApiRequest,
+  capabilities: readonly string[],
+): Promise<AgentColorsSnapshot["agents"] | null> {
+  if (!hostKeepsAgentColors(capabilities)) return null;
+  return (await request("POST", AGENT_COLORS_ROUTES.read, decodeAgentColorsSnapshot, {})).agents;
+}
+
+/**
+ * Sets or removes (`null`) the colour of one agent. The host also sets the nearest hue, and answers
+ * with all of its colours.
+ */
+export async function writeHostAgentColor(
+  request: TeamApiRequest,
+  agentId: string,
+  color: AvatarColor | null,
+): Promise<AgentColorsSnapshot["agents"]> {
+  return (await request("POST", AGENT_COLORS_ROUTES.set, decodeAgentColorsSnapshot, { agentId, color })).agents;
 }
 
 /** Workspace actions that only send host requests and read advertised capabilities. */
@@ -607,6 +642,7 @@ export function createHostRequestActions({
     canInstallAgentTemplate: (serverId) => has(serverId, AGENT_INSTALL_CAPABILITY),
     canEditQueue: (serverId) => has(serverId, TEAM_QUEUE_EDIT_CAPABILITY),
     canRetryMessage: (serverId) => has(serverId, TEAM_MESSAGE_CLIENT_ID_CAPABILITY),
+    canDeleteMessages: (serverId) => has(serverId, MESSAGE_DELETE_CAPABILITY),
     attachmentSupport: (serverId) => {
       const advertised = capabilities.get(serverId) ?? [];
       return {
@@ -1188,6 +1224,20 @@ export function createHostRequestActions({
     },
     setMessageReaction: async (agentId, serverId, messageId, emoji) => {
       await request("POST", TEAM_API_ROUTES.agent.reactions(agentId), ignoreResponse, { messageId, emoji }, serverId);
+    },
+    deleteMessage: async (serverId, target) => {
+      requireCapability(capabilities, serverId, MESSAGE_DELETE_CAPABILITY, "error.team.messageDeleteUnsupported");
+      const { messageId } = target;
+      if (target.kind === "channel") {
+        const body = { channelId: target.channelId, messageId };
+        await request("POST", MESSAGE_DELETE_ROUTES.channel, ignoreResponse, body, serverId);
+      } else if (target.taskId) {
+        const body = { agentId: target.agentId, taskId: target.taskId, messageId };
+        await request("POST", MESSAGE_DELETE_ROUTES.task, ignoreResponse, body, serverId);
+      } else {
+        const body = { agentId: target.agentId, messageId };
+        await request("POST", MESSAGE_DELETE_ROUTES.agent, ignoreResponse, body, serverId);
+      }
     },
     downloadAttachment: (serverId, attachmentId) => {
       const download = () =>

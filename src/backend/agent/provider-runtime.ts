@@ -90,6 +90,7 @@ import { defaultUsageModel, ProviderAccountFailed, ProviderAccounts } from "./pr
 import {
   createAcpRequestEchoReader,
   isAcpHandlerDiagnostic,
+  isGitSpawnDiagnostic,
   isGlogBelowErrorDiagnostic,
   isIgnoredConfigDiagnostic,
   isMcpSubsystemDiagnostic,
@@ -186,6 +187,8 @@ const SPAWN_ENVIRONMENT_PROVIDERS: readonly AgentProvider[] = [
   "cursor",
   "cline",
   "kimi",
+  "devin",
+  "copilot",
   "hermes",
   "acp",
 ];
@@ -3664,6 +3667,10 @@ export class ProviderRuntime implements ProviderPort {
       }
       if (client.provider === "grok" && isUsageReadDiagnostic(message)) {
         stderrLogger.warn("A provider reported a failed usage reading.", { provider: client.provider, message });
+        return;
+      }
+      if (client.provider === "grok" && isGitSpawnDiagnostic(message)) {
+        stderrLogger.warn("A provider could not start git.", { provider: client.provider, message });
         return;
       }
       if (isAcpHandlerDiagnostic(message)) {
