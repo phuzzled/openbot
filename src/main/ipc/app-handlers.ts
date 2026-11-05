@@ -78,7 +78,8 @@ const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "hermes-install": "https://hermes-agent.nousresearch.com/docs/getting-started/installation",
   feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
-  changelog: "https://openbot.run/changelog",
+  // Fork: the release notes of phuzzled/openbot, which also list the upstream changes. See FORK.md.
+  changelog: "https://github.com/phuzzled/openbot/releases",
   guides: "https://openbot.run/guides",
   // A Redirect Rule in the openbot.run Cloudflare zone sends this to the current Discord invite.
   discord: "https://discord.openbot.run",

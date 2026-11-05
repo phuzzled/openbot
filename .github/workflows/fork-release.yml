@@ -76,6 +76,33 @@ jobs:
             echo "base=$(scripts/fork/fork-release.sh base HEAD)"
           } >> "$GITHUB_OUTPUT"
 
+      # The What's New entries of each fork release up to this one, for the dialog of the app, and the
+      # notes of this release. They come from git history: see scripts/fork/fork-whats-new.mjs.
+      - name: Write the release notes
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/notes"
+          if [ -f scripts/fork/fork-whats-new.mjs ]; then
+            node scripts/fork/fork-whats-new.mjs json "$TAG" > "$RUNNER_TEMP/notes/whats-new.json"
+            node scripts/fork/fork-whats-new.mjs markdown "$TAG" > "$RUNNER_TEMP/notes/release-notes.md"
+          else
+            # A tag from before the release notes.
+            echo "[]" > "$RUNNER_TEMP/notes/whats-new.json"
+            echo "Linux build of the fork phuzzled/openbot. See FORK.md and FORK-DEPLOY.md." > "$RUNNER_TEMP/notes/release-notes.md"
+          fi
+          cat "$RUNNER_TEMP/notes/release-notes.md"
+
+      - name: Upload the release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes/
+          if-no-files-found: error
+          retention-days: 7
+
   linux:
     name: Build Linux ${{ matrix.arch }} AppImage
     needs: validate
@@ -120,6 +147,30 @@ jobs:
             fs.writeFileSync("package.json", JSON.stringify(file, null, 2) + "\n");
           ' "$RELEASE_VERSION"
           test "$(node -p 'require("./package.json").version')" = "$RELEASE_VERSION"
+
+      - name: Download the release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes
+
+      # As the version: the fork notes go into the build only, so a sync never has a conflict on the
+      # upstream notes file.
+      - name: Add the fork releases to What's New
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A tag from before the release notes has no script, and its build keeps the upstream notes.
+          [ -f scripts/fork/fork-whats-new.mjs ] || exit 0
+          notes=src/renderer/src/features/updates/whats-new-releases.json
+          node scripts/fork/fork-whats-new.mjs apply "$RUNNER_TEMP/notes/whats-new.json" "$notes"
+          node -e '
+            const notes = require("./" + process.argv[1]);
+            if (!notes.some((release) => release.version === process.argv[2])) {
+              console.error("What'"'"'s New has no entry for " + process.argv[2] + ".");
+              process.exit(1);
+            }
+          ' "$notes" "$RELEASE_VERSION"
 
       - name: Install a virtual display for the launch check
         run: |
@@ -233,8 +284,13 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ needs.validate.outputs.tag }}
-      BASE_TAG: ${{ needs.validate.outputs.base }}
     steps:
+      - name: Download the release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notes
+          path: release-notes
+
       - name: Download Linux x64 release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -258,15 +314,16 @@ jobs:
           cat release-assets/linux/SHA256SUMS-linux.txt release-assets/linux-arm64/SHA256SUMS-linux-arm64.txt \
             > release-assets/SHA256SUMS.txt
           artifacts=(release-assets/linux/* release-assets/linux-arm64/* release-assets/SHA256SUMS.txt)
-          notes="Linux server build of this fork: upstream OpenBot $BASE_TAG (nightly-labs/openbot) with the fork changes in FORK.md. Commit $(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha). Install and update: FORK-DEPLOY.md."
+          notes=release-notes/release-notes.md
+          printf '\nCommit %s.\n' "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" >> "$notes"
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${artifacts[@]}" --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest --repo "$GITHUB_REPOSITORY"
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
           else
             gh release create "$RELEASE_TAG" "${artifacts[@]}" \
               --verify-tag \
               --latest \
               --title "OpenBot $RELEASE_TAG (fork)" \
-              --notes "$notes" \
+              --notes-file "$notes" \
               --repo "$GITHUB_REPOSITORY"
           fi

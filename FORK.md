@@ -3,6 +3,26 @@
 This repository is a fork of OpenBot (`nightly-labs/openbot`). This file lists each place where the
 fork differs from upstream in a way that can collide with a later upstream change. Keep it current.
 
+## Why this fork
+
+Upstream OpenBot agents often stop with work still open: they promise to follow up and never do,
+stop a routine after its first turn, or lose a plan at a restart. This fork makes agents finish
+what they start and come back when they said they would, without letting a reminder take an action
+that you did not approve. It runs on Animus One, a Linux computer, and follows upstream `main`.
+
+| Change | Result |
+|---|---|
+| Stall sweep | An agent that ends a turn with open work and nothing set to bring it back gets a reminder after 15 minutes, or after the time it promised ("tomorrow", "in 2 hours"). |
+| Harmless check-ins | A reminder turn can only report, ask, read or set a time to check back. Sends, payments, deletes, shell commands, file changes and new routines are blocked, also with Full access. |
+| Timed waits | An agent can set a time, up to 30 days ahead, to check back by itself in its chat or task, with retries after a restart or a provider error. |
+| Keep going everywhere | Routine runs, messages from other agents and work cut off by a restart continue the plan. Before a step that sends, pays, books, deploys, deletes or contacts someone that you did not ask for, the agent asks first. |
+| Accountable instructions | Agents check that work is done, waits for you, or has a wait that brings them back before they end a turn, and report Done, Needs you, Still working and Failed without being asked. |
+| Upstream `main`, released for Linux | Every 6 hours the sync merges upstream `main`, runs the typecheck, the fork unit tests and 6 fork end-to-end checks, and releases a Linux AppImage (`0.61.1002` and on). The installed app updates from this fork. |
+| Release notes in the app | What's New and the GitHub Release of each fork release list the fork changes and the upstream changes that it brings in. |
+
+The fork keeps its data apart from upstream (fork tables, no upstream migration numbers), so an
+upstream merge never changes the schema history.
+
 ## Rules
 
 - Never add a column to an upstream table. Put fork data in a fork-owned table with the `fork_`
@@ -36,7 +56,8 @@ fork differs from upstream in a way that can collide with a later upstream chang
 | Timed waits and plan continuations of a routine thread | `src/backend/agent-service.ts` (`#waitLane`: one `isRoutineThread` check), `src/backend/agent/openbot-tool-router.ts` (`inTaskThread` and `inExecutionThread` of a wait call: one `isRoutineThread` check), `src/backend/agent/drain-scheduler.ts` and `turn-lifecycle.ts` (the continuation of a routine run) | Upstream v0.61.0 runs each routine in its own side thread (#4777, migration 54). A plan of a routine run continues in that thread, in the open session of the run. A wait that a routine thread opens is not a task wait: a timed wait wakes in the agent's own chat, because the lane of the routine thread takes routine runs. |
 | `status.agent.stallAlert` | `packages/i18n/src/messages/*/status/agent.ts` | The alert line after the last nudge. |
 | Server update feed on this fork | `electron-builder.yml` (`publish.owner`), `scripts/install-server.sh` and `scripts/hosting/openbot-hosted-update` (`RELEASES=`, one line each), `src/main/host-release-service.ts` (the feed URL of `fetchLatestRelease`) | A server that installed from this fork installs and updates from the releases of `phuzzled/openbot`, not of upstream. `scripts/fork/fork-release.sh check-feed` fails when an upstream merge adds an upstream feed URL to these files. See `FORK-DEPLOY.md`. |
-| Release pipeline | `.github/workflows/fork-sync.yml`, `.github/workflows/fork-release.yml`, `scripts/fork/fork-release.sh`, `FORK-DEPLOY.md` (fork-only files) | Merges upstream `main` when it has new commits, runs the fork tests, and releases Linux AppImages as version X.Y.((Z+1)*1000+N). |
+| Release pipeline | `.github/workflows/fork-sync.yml`, `.github/workflows/fork-release.yml`, `scripts/fork/fork-release.sh`, `scripts/fork/fork-whats-new.mjs`, `FORK-DEPLOY.md` (fork-only files) | Merges upstream `main` when it has new commits, runs the fork tests, and releases Linux AppImages as version X.Y.((Z+1)*1000+N). Writes the What's New entries and the GitHub Release notes of each fork release from the history; the release build adds the entries to `whats-new-releases.json`, and the source keeps the upstream file. |
+| Changelog link to the fork releases | `src/main/ipc/app-handlers.ts` (`EXTERNAL_DESTINATIONS.changelog`), `src/renderer/src/features/web-client/web-provider-admin.ts` (`WEB_EXTERNAL_DESTINATIONS.changelog`), `src/renderer/src/features/updates/WhatsNewOverlay.tsx` (`onOpenChangelog`): one URL each | Changelog in the Help menu and in What's New opens `https://github.com/phuzzled/openbot/releases`, whose notes list the fork changes and the upstream changes of each fork release. openbot.run/changelog has upstream releases only. |
 
 ## Settings
 

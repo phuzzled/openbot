@@ -27,7 +27,7 @@ export function WhatsNewOverlay(props: { ready: boolean }) {
       onRetry={whatsNew.retry}
       onOpenChangelog={() => {
         void appPort()
-          .openUrl("https://openbot.run/changelog")
+          .openUrl("https://github.com/phuzzled/openbot/releases") // Fork: see FORK.md.
           .catch((error: unknown) => toast.error(errorMessage(error, t("update.whatsNew.changelogFailed")), { error }));
       }}
     />
