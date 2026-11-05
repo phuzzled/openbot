@@ -8,7 +8,7 @@ stays on upstream. It is a client of the server, and this pipeline does not buil
 
 | Part | File | What it does |
 |---|---|---|
-| Sync | `.github/workflows/fork-sync.yml` | Each night at 03:37 UTC, and on a manual run. When upstream has a release tag that `main` does not contain, it merges that tag into `main` in a branch, then runs the desktop typecheck, the unit test files that fork commits touched, and the fork end-to-end checks (`stall-sweep`, `plan-continuation`, `timed-waits`, `timed-waits-followup`, `timed-waits-adversarial`, `agent-waits-tools`). When all pass, it pushes `main`, tags the next fork version, and calls the release. When `main` has fork commits with no release, it does the same with no merge. |
+| Sync | `.github/workflows/fork-sync.yml` | Every 6 hours (00:21, 06:21, 12:21 and 18:21 UTC), and on a manual run. When upstream has a release tag that `main` does not contain, it merges that tag into `main` in a branch, then runs the desktop typecheck, the unit test files that fork commits touched, and the fork end-to-end checks (`stall-sweep`, `plan-continuation`, `timed-waits`, `timed-waits-followup`, `timed-waits-adversarial`, `agent-waits-tools`). When all pass, it pushes `main`, tags the next fork version, and calls the release. When `main` has fork commits with no release, it does the same with no merge. |
 | Release | `.github/workflows/fork-release.yml` | Builds the x64 and arm64 AppImages as `release.yml` does, checks them, and publishes them with `latest-linux.yml`, `latest-linux-arm64.yml` and `SHA256SUMS.txt` as the latest GitHub Release of this fork. The hosting files (`resources/hosting/*`) are in each AppImage. |
 | Steps | `scripts/fork/fork-release.sh` | Finds the upstream base, the next fork version and the fork tests, and checks the update feed. |
 | Update feed | `electron-builder.yml`, `scripts/install-server.sh`, `scripts/hosting/openbot-hosted-update`, `src/main/host-release-service.ts` | Name `phuzzled/openbot`. The install, the update timer, `sudo openbot update`, and the update check in Server Settings read the releases of this fork. |
@@ -183,7 +183,7 @@ installable with step 5.
   `phuzzled/openbot`, as `FORK.md` lists.
 - Close the issue, and delete `fork-sync/vX.Y.Z`.
 
-To release fork commits before the nightly run: `gh workflow run fork-sync.yml --repo
+To release fork commits before the next scheduled run: `gh workflow run fork-sync.yml --repo
 phuzzled/openbot`. To build an existing tag again: `gh workflow run fork-release.yml --repo
 phuzzled/openbot -f tag=v0.60.1001`.
 
@@ -198,6 +198,6 @@ not overlap. The fork does not change the Team protocol. The fork adds two optio
   connection the app shows a version warning. With a fork server of a higher number, it tells the
   user to update the app. This is a warning only.
 - When upstream releases a new version, the Mac app can update before the server (the sync runs
-  each night). A server one release behind is normally inside the protocol range. An upstream
+  every 6 hours). A server one release behind is normally inside the protocol range. An upstream
   release that raises the protocol minimum makes the server "incompatible" until the sync releases
   it; a sync issue then blocks the server. Fix the issue first.
