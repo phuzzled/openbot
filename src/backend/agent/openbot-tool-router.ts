@@ -40,7 +40,7 @@ import { OPENBOT_BROWSER_NAMESPACE } from "../browser-tools";
 import type { ChannelService } from "../channel-service";
 import type { ProviderSession } from "../database/provider-sessions";
 import type { MailboxStore } from "../mailbox-store";
-import { agentMcpServers } from "../mcp-provider-shapes";
+import { agentMcpServers, codexDeferredMcpServers } from "../mcp-provider-shapes";
 import type { MessagingThreads } from "../messaging/messaging-threads";
 import { MESSAGING_OUTBOUND_TOOLS } from "../messaging/messaging-tools";
 import {
@@ -139,7 +139,13 @@ import { type AgentSidebar, handleSidebarTool } from "./sidebar-tools";
 import { LOCAL_SKILL_TOOL_DEFINITIONS, type LocalSkillTools, runLocalSkillTool } from "./skill-tools";
 import { isDynamicToolCall } from "./thread-items";
 import { toolCallIdempotencyKey } from "./tool-call-idempotency";
-import { DEFERRED_MCP_NOTE, discoverTools, namesInSearch, resolveDeferredTool } from "./tool-catalog";
+import {
+  CODEX_DEFERRED_MCP_NOTE,
+  DEFERRED_MCP_NOTE,
+  discoverTools,
+  namesInSearch,
+  resolveDeferredTool,
+} from "./tool-catalog";
 import { ToolOperationFailed, toolStep, toToolOperationFailed } from "./tool-operation";
 import type { AgentBrowserHost } from "./turn-lifecycle";
 import { handleUpdateAgentsTool } from "./update-agents-tool";
@@ -387,9 +393,9 @@ export class OpenBotToolRouter {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
           let params = request.params;
           if (params.namespace === "openbot") {
-            const deferredMcp = client.deferredMcpTools?.(params.threadId) ?? false;
+            const deferredMcp = this.#deferredMcpNote(client, params.threadId);
             const invalid = deferredMcp
-              ? `${sourceText("error.agent.toolRequestInvalid")} ${DEFERRED_MCP_NOTE}`
+              ? `${sourceText("error.agent.toolRequestInvalid")} ${deferredMcp}`
               : sourceText("error.agent.toolRequestInvalid");
             if (params.tool === "tool_search" || params.tool === "tool_describe") {
               const agentId = this.#conversation.agentForThread(params.threadId);
@@ -405,7 +411,7 @@ export class OpenBotToolRouter {
               const signIns = yield* this.#searchSignIns(agentId, params);
               if (request.signal?.aborted || !client.running) return;
               const found =
-                deferredMcp && params.tool === "tool_search" ? { ...result, mcpTools: DEFERRED_MCP_NOTE } : result;
+                deferredMcp && params.tool === "tool_search" ? { ...result, mcpTools: deferredMcp } : result;
               client.respond(
                 request.id,
                 openBotToolResult(signIns.length > 0 ? { ...found, mcpServers: signIns } : found),
@@ -427,7 +433,19 @@ export class OpenBotToolRouter {
               client.respond(request.id, openBotToolFailure(sourceText("error.agent.historyUnavailable")));
               return;
             }
-            const result = yield* this.#history.call(scope.agentId, scope.threadId, params.tool, params.arguments).pipe(
+            // A taskId reads a side thread of the same agent. A thread of another agent reads as unknown.
+            const taskId = isRecord(params.arguments) ? params.arguments.taskId : undefined;
+            const targetThreadId =
+              taskId === undefined
+                ? scope.threadId
+                : typeof taskId === "string" && this.#tasks.has(scope.agentId, taskId)
+                  ? this.#tasks.require(scope.agentId, taskId).threadId
+                  : null;
+            if (targetThreadId === null) {
+              client.respond(request.id, openBotToolFailure(sourceText("error.backend.threadNotFound")));
+              return;
+            }
+            const result = yield* this.#history.call(scope.agentId, targetThreadId, params.tool, params.arguments).pipe(
               Effect.catch(() => Effect.succeed(openBotToolFailure(sourceText("error.agent.historyUnavailable")))),
               Effect.catchDefect(() =>
                 Effect.succeed(openBotToolFailure(sourceText("error.agent.historyUnavailable"))),
@@ -625,6 +643,17 @@ export class OpenBotToolRouter {
       Effect.catchDefect(reportFailure),
     );
   }).bind(this);
+
+  /**
+   * The note that sends a model from OpenBot's catalog to its provider's own MCP tools, or null when
+   * the provider declares them. Pi tells this for each thread. Codex defers each MCP server except
+   * Computer Use (#4468), so one saved server that is on is enough.
+   */
+  #deferredMcpNote(client: AgentClient, threadId: string): string | null {
+    if (client.deferredMcpTools?.(threadId)) return DEFERRED_MCP_NOTE;
+    if (client.provider !== "codex") return null;
+    return codexDeferredMcpServers(this.#mcpServers?.list() ?? []).length > 0 ? CODEX_DEFERRED_MCP_NOTE : null;
+  }
 
   /**
    * Checks an `ask_ui` call and shows its block. Like `ask_user`, it answers the call only when the
